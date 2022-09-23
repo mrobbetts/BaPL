@@ -32,6 +32,39 @@ function foldBin(lst)
   return tree
 end
 
+function foldIndex(lst)
+  local tree = lst[1]
+  for i = 2, #lst do
+    tree = {
+      tag = "indexed",
+      array = tree,
+      index = lst[i]
+    }
+  end
+  return tree
+end
+
+-- Encode all array dimensions for a new expression into successive ast node
+-- branches.
+--
+-- A `new` node will always have `tag` and `exp` fields, describing that it is
+-- a new array and its size. It may optionally have a subdim field, which will
+-- be another `new` node.
+function foldNew(fst, ...)
+  if select('#', ...) == 0 then
+    return {
+      tag = "new",
+      exp = fst,
+    }
+  else
+    return {
+      tag = "new",
+      exp = fst,
+      subdim = foldNew(...)
+    }
+  end
+end
+
 function seqNode(st1, st2)
   if (st2 == nil) then
     return st1
@@ -171,9 +204,9 @@ grammar = lpeg.P{
   elif = ((Rw("elseif") * expr * block) * (elif + Rw("else") * block)^-1) / node("if1", "cond", "th", "el"),
   if1  = ((Rw("if")     * expr * block) * (elif + Rw("else") * block)^-1) / node("if1", "cond", "th", "el"),
   while1 = (Rw("while") * expr * block) / node("while1", "cond", "body"),
-  lhs  = ((var * T("[") * expr * T("]")) / node("indexed", "array", "index"))
-       + var,
-  new1 = (Rw("new") * T("[") * expr * T("]")) / node("new", "exp"),
+  lhs  = lpeg.Ct(var * (T("[") * expr * T("]"))^0) / foldIndex,
+  new1 = (Rw("new")  * (T("[") * expr * T("]"))^0) / foldNew,
+  -- new1 = (Rw("new") * T("[") * expr * T("]")) / node("new", "exp"),
   block = T("{") * statements * T("}"),
   statement = block
             + if1
@@ -233,6 +266,19 @@ function Compiler:addJump(op)
   return #(self.code)
 end
 
+-- Recursively convert the tree of multiple array subdimensions into a sequence
+-- of push intructions, and return the number of dimensions we found/traversed.
+function Compiler:addDims(ast)          -- [Ex]
+  if ast.subdim then                    -- [Ex]
+    n = 1 + self:addDims(ast.subdim)    -- [Ex]
+    self:codeExp(ast.exp)               -- [Ex]
+    return n                            -- [Ex]
+  else                                  -- [Ex]
+    self:codeExp(ast.exp)               -- [Ex]
+    return 1                            -- [Ex]
+  end                                   -- [Ex]
+end                                     -- [Ex]
+
 function Compiler:idInUse(id)
   index = self.vars[id]
   if not index then
@@ -283,9 +329,14 @@ function Compiler:codeExp(ast)
     self:codeExp(ast.array)
     self:codeExp(ast.index)
     self:addCode("array_load")
-  elseif (ast.tag == "new") then
-    self:codeExp(ast.exp)
-    self:addCode("array_new")
+  elseif (ast.tag == "new") then                    -- [Ex]
+    -- Push the individual array dimensions onto the stack, one at a time.
+    numDims = self:addDims(ast)                     -- [Ex]
+
+    -- Finally, push the number of dimensions onto the stack, so array_new
+    -- can pop them all and implement.
+    self:codeExp({ tag = "number", val = numDims})  -- [Ex]
+    self:addCode("array_new")                       -- [Ex]
   end
 end
 
@@ -367,17 +418,40 @@ function Compiler:compile(ast)
 end
 
 function printableValue(v)
-  if (type(v) == "table") then
-    s = "array[" .. v.size .. "] {" .. tostring(v[1]);      -- [Ex]
-    for i = 2, #v do                                        -- [Ex]
-      s = s .. ", " .. v[i]                                 -- [Ex]
-    end                                                     -- [Ex]
-    s = s .. "}"                                            -- [Ex]
-    return s                                                -- [Ex]
-  else
-    return v
+  if v == nil then                                              -- [Ex]
+    return "";                                                  -- [Ex]
+  elseif (type(v) == "table") then                              -- [Ex]
+    s = "array[" .. v.size .. "] {" .. printableValue(v[1]);    -- [Ex]
+    for i = 2, #v do                                            -- [Ex]
+      s = s .. ", " .. printableValue(v[i])                     -- [Ex]
+    end                                                         -- [Ex]
+    s = s .. "}"                                                -- [Ex]
+    return s                                                    -- [Ex]
+  else                                                          -- [Ex]
+    return v                                                    -- [Ex]
   end
 end
+
+-- Recursively generate a multi-dimensional array. Don't love the mechanic of
+-- passing in the index explicitly, but I couldn't figure out how to peel off
+-- the first element of `dims` in the more classial recursive style.
+function generateArray_impl(index, dims)            -- [Ex]
+                                                    -- [Ex]
+  if index < #dims then                             -- [Ex]
+    local size = dims[index]                        -- [Ex]
+    local r = { size = size }                       -- [Ex]
+    for i = 1, size do                              -- [Ex]
+      r[i] = generateArray_impl(index + 1, dims)    -- [Ex]
+    end                                             -- [Ex]
+    return r                                        -- [Ex]
+  else                                              -- [Ex]
+    return { size = dims[index] }                   -- [Ex]
+  end                                               -- [Ex]
+end                                                 -- [Ex]
+
+function generateArray(dims)                        -- [Ex]
+  return generateArray_impl(1, dims)                -- [Ex]
+end                                                 -- [Ex]
 
 function run(code, mem, stack)
   pc = 1
@@ -401,25 +475,40 @@ function run(code, mem, stack)
       else
         stack[top] = mem[id]
         -- logStr = logStr .. "\nload    " .. code[pc] .. " -> " .. mem[id]
-        logStr = logStr .. "\nload        " .. code[pc] .. " -> " .. printableValue(mem[id])
-        -- logStr = logStr .. "\nload    " .. code[pc]
+        -- logStr = logStr .. "\nload        " .. code[pc] .. " -> " .. printableValue(mem[id])
+        logStr = logStr .. "\nload        " .. code[pc]
       end
     elseif code[pc] == "store" then
       pc = pc + 1
       id = code[pc]
+      -- print("storing " .. type(stack[top]) .. " to variable " .. id)
       mem[id] = stack[top]
       top = top - 1
       logStr = logStr .. "\nstore       " .. code[pc] .. " <- " .. printableValue(mem[id])
-    elseif code[pc] == "array_new" then
-      stack[top] = { size = stack[top] }
-      logStr = logStr .. "\narray_new   " .. code[pc - 1]
+      -- logStr = logStr .. "\nstore       " .. code[pc] .. " <- "
+    elseif code[pc] == "array_new" then                                         -- [Ex]
+      -- Gather the array dims                                                  -- [Ex]
+      numDims = stack[top]                                                      -- [Ex]
+      dims = { size = numDims }                                                 -- [Ex]
+      for i = 1, numDims do                                                     -- [Ex]
+        dims[i] = stack[top - i]                                                -- [Ex]
+      end                                                                       -- [Ex]
+                                                                                -- [Ex]
+      logStr = logStr .. "\narray_new   " .. printableValue(dims)               -- [Ex]
+                                                                                -- [Ex]
+      -- We have consumed numDims + 1 values from the stack, but are about to   -- [Ex]
+      -- push another.                                                          -- [Ex]
+      top = top - numDims                                                       -- [Ex]
+                                                                                -- [Ex]
+      -- Generate                                                               -- [Ex]
+      stack[top] = generateArray(dims)                                          -- [Ex]
     elseif code[pc] == "array_load" then
       local index = stack[top]
       local array = stack[top - 1]
       if index > array.size then
         error("Index (" .. index .. ") out of range (array size is " .. array.size .. ")")
       else
-        logStr = logStr .. "\narray_load  " .. (top - 1) .. "[" .. index .. "]" .. " -> " .. array[index]
+        logStr = logStr .. "\narray_load  " .. (top - 1) .. "[" .. index .. "]" .. " -> " .. printableValue(array[index])
         top = top - 1
         stack[top] = array[index]
       end
@@ -438,8 +527,8 @@ function run(code, mem, stack)
       logStr = logStr .. "\nreturn  " .. tostring(stack[top])
       return logStr
     elseif code[pc] == "print" then
-      logStr = logStr .. "\nprint       \"" .. printableValue(stack[top]) .. "\"" -- [Ex]
-      print(printableValue(stack[top]))                                           -- [Ex]
+      logStr = logStr .. "\nprint       \"" .. printableValue(stack[top]) .. "\""
+      print(printableValue(stack[top]))
       top = top - 1
     elseif code[pc] == "jmpz" then
       top = top - 1
