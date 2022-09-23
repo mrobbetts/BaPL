@@ -56,7 +56,6 @@ function node(tag, ...)
       r[v] = params[k] -- Kindy kludgy? I'm sure there's a neater way.
     end
 
-    print(printTable(r))
     return r
   end
 end
@@ -92,8 +91,7 @@ digit = lpeg.R("09")^1
 hexNumeral = lpeg.R("09", "af")^1
 decimal = digit * (lpeg.P(".")  * digit)^-1
 scient  = decimal * (lpeg.S("eE") * digit)^-1
--- number = ((lpeg.P("0x") * (hexNumeral / hexNode)) + (scient / node)) * space
-number = ((lpeg.P("0x") * (hexNumeral / function(x) return tonumber(x, 16) end / node("number", "val"))) + (scient / tonumber / node("number", "val"))) * space --[Ex]
+number = ((lpeg.P("0x") * (hexNumeral / function(x) return tonumber(x, 16) end / node("number", "val"))) + (scient / tonumber / node("number", "val"))) * space
 
 alpha = lpeg.R("az", "AZ")
 alphanum  = alpha + digit
@@ -132,7 +130,6 @@ function Rw(w)
   return lpeg.P(w) * -alphanum * space
 end
 
--- var = ID / varNode
 var = ID / node("variable", "val")
 
 opU = lpeg.C(lpeg.S("-!")) * space
@@ -154,20 +151,17 @@ statements = lpeg.V("statements")
 grammar = lpeg.P{
   "statements",
   fact = number + (T("(") * expC * T(")")) + var,
-  -- expU = ((opU * fact) / unaryNode) + fact,                                  --[Ex]
-  expU = ((opU * fact)                  / node("unop", "op", "exp")) + fact,    --[Ex]
+  expU = ((opU * fact)                  / node("unop", "op", "exp")) + fact,
   expE = lpeg.Ct(expU * (opE * expU)^0) / foldBin,
   expM = lpeg.Ct(expE * (opM * expE)^0) / foldBin,
   expA = lpeg.Ct(expM * (opA * expM)^0) / foldBin,
   expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,
   block = T("{") * statements * T("}"),
   statement = block
-            -- + ((T("@") * expC)          / printNode )                        --[Ex]
-            + ((T("@") * expC)          / node("print", "exp"))                 --[Ex]
-            -- + ((ID * T("=") * expC)     / assignNode)                        --[Ex]
-            + ((ID * T("=") * expC)     / node("assgn", "id", "exp"))           --[Ex]
-            -- + ((Rw("return") * expC)    / returnNode),                       --[Ex]
-            + ((Rw("return") * expC)    / node("ret", "exp")),                  --[Ex]
+            + (Rw("if") * expC * block) / node("if1", "cond", "th")
+            + ((T("@") * expC)          / node("print", "exp"))
+            + ((ID * T("=") * expC)     / node("assgn", "id", "exp"))
+            + ((Rw("return") * expC)    / node("ret", "exp")),
   statements = (statement * (T(";") * statements)^-1 * T(";")^-1) / seqNode
 }
 
@@ -212,6 +206,12 @@ Compiler = {
 function Compiler:addCode(op)
   local code = self.code
   code[#code + 1] = op
+end
+
+function Compiler:addJump(op)
+  self:addCode(op)
+  self:addCode("0")
+  return #(self.code)
 end
 
 function Compiler:idInUse(id)
@@ -264,6 +264,12 @@ function Compiler:codeStat(ast)
   elseif (ast.tag == "print") then
     self:codeExp(ast.exp)
     self:addCode("print")
+  elseif (ast.tag == "if1") then -- If-then
+    self:codeExp(ast.cond)
+    l = self:addJump("jmpz")
+    self:codeStat(ast.th)
+    -- self.code[l] = #(self.code)
+    self.code[l] = #(self.code) - l    --[Ex]
   end
 end
 
@@ -309,6 +315,18 @@ function run(code, mem, stack)
       logStr = logStr .. "\nprint: " .. stack[top]
       print(stack[top])
       top = top - 1
+    elseif code[pc] == "jmpz" then
+      print("jmpz")
+      top = top - 1
+      if (stack[top + 1] == 0) then -- perform the jump / condition is false
+        logStr = logStr .. "\njmp " .. code[pc + 1]
+        -- pc = code[pc + 1]
+        pc = pc + code[pc + 1] + 1 -- [Ex]
+      else
+        logStr = logStr .. "\nnop "
+        pc = pc + 1
+      end
+      print("PC after jump: " .. pc)
     elseif code[pc] == "add" then
       top = top - 1
       logStr = logStr .. "\nadd: " .. stack[top] .. " + " .. stack[top + 1]
@@ -365,7 +383,7 @@ function run(code, mem, stack)
       logStr = logStr .. "\neq: " .. stack[top] .. " == " .. stack[top + 1]
       stack[top] = stack[top] == stack[top + 1]
     else
-      error("Unknown instruction")
+      error("Unknown instruction: " .. code[pc])
     end
     pc = pc + 1 -- Consume the code word for this instruction.
   end
