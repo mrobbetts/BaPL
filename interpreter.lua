@@ -90,26 +90,32 @@ function seqNode(st1, st2)
 end
 
 -- Determine the line within `str` of character index `n`.
-function getLineOf(str, n)                                    -- [Ex]
-  -- Find the first newline in str.                           -- [Ex]
-  i = string.find(str, "\n", 1)                               -- [Ex]
-  if i and n >= i then                                        -- [Ex]
-    -- The newline was before character n; recurse.           -- [Ex]
-    return 1 + getLineOf(string.sub(str, i + 1), n - (i + 1)) -- [Ex]
-  else                                                        -- [Ex]
-    -- Character n was before any newline; sentinel.          -- [Ex]
-    return 1                                                  -- [Ex]
+function getLineOf(str, n)
+  -- Find the first newline in str.
+  i = string.find(str, "\n", 1)
+  if i and n >= i then
+    -- The newline was before character n; recurse.
+    return 1 + getLineOf(string.sub(str, i + 1), n - (i + 1))
+  else
+    -- Character n was before any newline; sentinel.
+    return 1
   end
 end
 
-extent = 0                                          -- [Ex]
-function posCheck(pattern, i)                       -- [Ex]
-  extent = math.max(extent, i)                      -- [Ex]
-  return true                                       -- [Ex]
+extent = 0
+function posCheck(pattern, i)
+  extent = math.max(extent, i)
+  return true
 end
 
-space = lpeg.S(" \t\n")^0 * lpeg.P(posCheck)
--- space = lpeg.S(" \n")^0
+lineComment = "#" * (lpeg.P(1) - "\n")^0             -- [Ex]
+blockComment = "#{" * (lpeg.P(1) - "#}")^0 * "#}"    -- [Ex]
+
+space = (lpeg.S(" \t\n")                             -- [Ex]
+         + blockComment                              -- [Ex]
+         + lineComment)^0                            -- [Ex]
+      * lpeg.P(posCheck)
+
 digit = lpeg.R("09")^1
 hexNumeral = lpeg.R("09", "af")^1
 decimal = digit * (lpeg.P(".")  * digit)^-1
@@ -169,13 +175,13 @@ grammar = lpeg.P{
 grammar = grammar * -1
 
 function parse(code)
-  ast = grammar:match(code)                                                      -- [Ex]
-  if not ast then                                                                -- [Ex]
-    print("error, at " .. extent .. " (line " .. getLineOf(code, extent) .. ")") -- [Ex]
-    os.exit(1)                                                                   -- [Ex]
-  else                                                                           -- [Ex]
-    return ast                                                                   -- [Ex]
-  end                                                                            -- [Ex]
+  ast = grammar:match(code)
+  if not ast then
+    print("error, at " .. extent .. " (line " .. getLineOf(code, extent) .. ")")
+    os.exit(1)
+  else
+    return ast
+  end
 end
 
 function addCode(state, op)
