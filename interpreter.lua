@@ -1,20 +1,5 @@
 lpeg = require "lpeg"
 
--- Parse decimal numbers
-function node(num)
-  return { tag = "number", val = tonumber(num) }
-end
-
--- Parse hex numbers
-function hexNode(num)
-  return { tag = "number", val = tonumber(num, 16) }
-end
-
--- Parse variable names
-function varNode(var)
-  return { tag = "variable", val = var }
-end
-
 -- Indent a string by two spaces.
 function indent(s)
   return "  " .. s:gsub("\n", "\n  ")
@@ -47,36 +32,6 @@ function foldBin(lst)
   return tree
 end
 
-function unaryNode(op, exp)
-  return {
-    tag = "unop",
-    op = op,
-    e  = exp
-  }
-end
-
-function assignNode(id, exp)
-  return {
-    tag = "assgn",
-    id = id,
-    exp = exp
-  }
-end
-
-function printNode(exp)
-  return {
-    tag = "print",
-    exp = exp
-  }
-end
-
-function returnNode(exp)
-  return {
-    tag = "ret",
-    exp = exp
-  }
-end
-
 function seqNode(st1, st2)
   if (st2 == nil) then
     return st1
@@ -86,6 +41,23 @@ function seqNode(st1, st2)
       st1 = st1,
       st2 = st2
     }
+  end
+end
+
+function node(tag, ...)
+  local labels = table.pack(...)
+  return function (...)
+    local params = table.pack(...)
+
+    -- Construct a table with the right tag, then zip together
+    -- the labels and params.
+    r = { ["tag"] = tag }
+    for k, v in ipairs(labels) do
+      r[v] = params[k] -- Kindy kludgy? I'm sure there's a neater way.
+    end
+
+    print(printTable(r))
+    return r
   end
 end
 
@@ -120,7 +92,8 @@ digit = lpeg.R("09")^1
 hexNumeral = lpeg.R("09", "af")^1
 decimal = digit * (lpeg.P(".")  * digit)^-1
 scient  = decimal * (lpeg.S("eE") * digit)^-1
-number = ((lpeg.P("0x") * (hexNumeral / hexNode)) + (scient / node)) * space
+-- number = ((lpeg.P("0x") * (hexNumeral / hexNode)) + (scient / node)) * space
+number = ((lpeg.P("0x") * (hexNumeral / function(x) return tonumber(x, 16) end / node("number", "val"))) + (scient / tonumber / node("number", "val"))) * space --[Ex]
 
 alpha = lpeg.R("az", "AZ")
 alphanum  = alpha + digit
@@ -159,7 +132,8 @@ function Rw(w)
   return lpeg.P(w) * -alphanum * space
 end
 
-var = ID / varNode
+-- var = ID / varNode
+var = ID / node("variable", "val")
 
 opU = lpeg.C(lpeg.S("-!")) * space
 opA = lpeg.C(lpeg.S("+-")) * space
@@ -180,16 +154,20 @@ statements = lpeg.V("statements")
 grammar = lpeg.P{
   "statements",
   fact = number + (T("(") * expC * T(")")) + var,
-  expU = ((opU * fact) / unaryNode) + fact,
+  -- expU = ((opU * fact) / unaryNode) + fact,                                  --[Ex]
+  expU = ((opU * fact)                  / node("unop", "op", "exp")) + fact,    --[Ex]
   expE = lpeg.Ct(expU * (opE * expU)^0) / foldBin,
   expM = lpeg.Ct(expE * (opM * expE)^0) / foldBin,
   expA = lpeg.Ct(expM * (opA * expM)^0) / foldBin,
   expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,
   block = T("{") * statements * T("}"),
   statement = block
-            + ((T("@") * expC)          / printNode )
-            + ((ID * T("=") * expC)     / assignNode)
-            + ((Rw("return") * expC)    / returnNode),
+            -- + ((T("@") * expC)          / printNode )                        --[Ex]
+            + ((T("@") * expC)          / node("print", "exp"))                 --[Ex]
+            -- + ((ID * T("=") * expC)     / assignNode)                        --[Ex]
+            + ((ID * T("=") * expC)     / node("assgn", "id", "exp"))           --[Ex]
+            -- + ((Rw("return") * expC)    / returnNode),                       --[Ex]
+            + ((Rw("return") * expC)    / node("ret", "exp")),                  --[Ex]
   statements = (statement * (T(";") * statements)^-1 * T(";")^-1) / seqNode
 }
 
@@ -213,7 +191,7 @@ Compiler = {
   numVars = 0,
   unops = {
     ["-"] = "neg",
-    ["!"] = "not"   -- [Ex]
+    ["!"] = "not"
   },
   binops = {
     ["+"] = "add",
@@ -263,7 +241,7 @@ function Compiler:codeExp(ast)
     self:codeExp(ast.e2)
     self:addCode(self.binops[ast.op])
   elseif (ast.tag == "unop") then
-    self:codeExp(ast.e)
+    self:codeExp(ast.exp)
     self:addCode(self.unops[ast.op])
   elseif (ast.tag == "variable") then
     self:addCode("load")
@@ -358,10 +336,10 @@ function run(code, mem, stack)
     elseif code[pc] == "neg" then
       logStr = logStr .. "\nneg: " .. "-" .. stack[top]
       stack[top] = -stack[top]
-    elseif code[pc] == "not" then                                     -- [Ex]
-      logStr = logStr .. "\nnot: " .. "!(" .. stack[top] .. ")"       -- [Ex]
-      -- stack[top] = not stack[top]                                  -- [Ex]  (Force return a boolean)
-      if (not stack[top]) then stack[top] = 1 else stack[top] = 0 end -- [Ex]  (return a 0 or 1 as logical result)
+    elseif code[pc] == "not" then
+      logStr = logStr .. "\nnot: " .. "!(" .. stack[top] .. ")"
+      -- stack[top] = not stack[top]
+      if (not stack[top]) then stack[top] = 1 else stack[top] = 0 end
     elseif code[pc] == "lte" then
       top = top - 1
       logStr = logStr .. "\nlte: " .. stack[top] .. " <= " .. stack[top + 1]
