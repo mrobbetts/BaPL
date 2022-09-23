@@ -99,7 +99,7 @@ IDStarter = alpha + lpeg.S("_")
 IDValids  = alphanum + lpeg.S("_")
 
 -- List of reserved words.
-reservedWords = { "return", "if", "else" }
+reservedWords = { "return", "if", "elseif", "else" } -- [Ex]
 
 -- Build a pattern to match any reserved word.
 reservedPattern = lpeg.P(false)
@@ -126,6 +126,7 @@ end
 
 -- Return a reserved-word pattern based on the string `w`.
 function Rw(w)
+  print("Reserved word pattern: " .. w)
   assert(reservedPattern:match(w))
   return lpeg.P(w) * -alphanum * space
 end
@@ -144,6 +145,8 @@ expE = lpeg.V("expE")
 expM = lpeg.V("expM")
 expA = lpeg.V("expA")
 expC = lpeg.V("expC")
+if1  = lpeg.V("if1")
+elif = lpeg.V("elif")
 block = lpeg.V("block")
 statement = lpeg.V("statement")
 statements = lpeg.V("statements")
@@ -156,9 +159,11 @@ grammar = lpeg.P{
   expM = lpeg.Ct(expE * (opM * expE)^0) / foldBin,
   expA = lpeg.Ct(expM * (opA * expM)^0) / foldBin,
   expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,
+  elif = ((Rw("elseif") * expC * block) * (elif + Rw("else") * block)^-1) / node("if1", "cond", "th", "el"), -- [Ex]
+  if1  = ((Rw("if")     * expC * block) * (elif + Rw("else") * block)^-1) / node("if1", "cond", "th", "el"), -- [Ex]
   block = T("{") * statements * T("}"),
   statement = block
-            + (Rw("if") * expC * block) / node("if1", "cond", "th")
+            + if1
             + ((T("@") * expC)          / node("print", "exp"))
             + ((ID * T("=") * expC)     / node("assgn", "id", "exp"))
             + ((Rw("return") * expC)    / node("ret", "exp")),
@@ -210,7 +215,7 @@ end
 
 function Compiler:addJump(op)
   self:addCode(op)
-  self:addCode("0")
+  self:addCode("xxx")
   return #(self.code)
 end
 
@@ -264,12 +269,32 @@ function Compiler:codeStat(ast)
   elseif (ast.tag == "print") then
     self:codeExp(ast.exp)
     self:addCode("print")
-  elseif (ast.tag == "if1") then -- If-then
+  elseif (ast.tag == "if1") then -- If-then-else
+
+    -- Add the code for the conditional.
     self:codeExp(ast.cond)
-    l = self:addJump("jmpz")
+    local l1 = self:addJump("jmpz") -- Jump over the Then, if (~cond).
+
+    -- Add the code for the Then.
     self:codeStat(ast.th)
-    -- self.code[l] = #(self.code)
-    self.code[l] = #(self.code) - l    --[Ex]
+
+    if (ast.el) then                                                   -- [Ex]
+      -- Jump over (what will be) the Else, now the Then is complete.  -- [Ex]
+      local l2 = self:addJump("jmp")                                   -- [Ex]
+
+      -- Fix l1 to jump to the beginning of the Else.                  -- [Ex]
+      self.code[l1] = #(self.code) - l1                                -- [Ex]
+
+    -- Now the Else                                                    -- [Ex]
+      self:codeStat(ast.el)                                            -- [Ex]
+
+      -- Fix l2 to jump to the end of the Else.                        -- [Ex]
+      self.code[l2] = #(self.code) - l2                                -- [Ex]
+
+    else                                                               -- [Ex]
+      -- Fix l1 to jump to the end of the Then.
+      self.code[l1] = #(self.code) - l1
+    end
   end
 end
 
@@ -316,17 +341,21 @@ function run(code, mem, stack)
       print(stack[top])
       top = top - 1
     elseif code[pc] == "jmpz" then
-      print("jmpz")
+      -- print("jmpz")
       top = top - 1
       if (stack[top + 1] == 0) then -- perform the jump / condition is false
         logStr = logStr .. "\njmp " .. code[pc + 1]
-        -- pc = code[pc + 1]
-        pc = pc + code[pc + 1] + 1 -- [Ex]
+        pc = pc + code[pc + 1] + 1
       else
         logStr = logStr .. "\nnop "
         pc = pc + 1
       end
-      print("PC after jump: " .. pc)
+      -- print("PC after jump: " .. pc)
+    elseif code[pc] == "jmp" then
+      top = top - 1
+      logStr = logStr .. "\njmp " .. code[pc + 1]
+      pc = pc + code[pc + 1] + 1
+      -- print("PC after jump: " .. pc)
     elseif code[pc] == "add" then
       top = top - 1
       logStr = logStr .. "\nadd: " .. stack[top] .. " + " .. stack[top + 1]
