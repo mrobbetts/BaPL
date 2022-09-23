@@ -177,6 +177,23 @@ unops = {
   ["-"] = "neg"
 }
 
+function idInUse(state, id)
+  index = state.vars[id]
+  if not index then
+    return false
+  else
+    return true
+  end
+end
+
+function id2num(state, id)
+  if not idInUse(state, id) then
+    state.numVars = state.numVars + 1
+    state.vars[id] = state.numVars
+  end
+  return state.vars[id]
+end
+
 function codeExp(state, ast)
   if (ast.tag == "number") then
     addCode(state, "push")
@@ -190,11 +207,7 @@ function codeExp(state, ast)
     addCode(state, unops[ast.op])
   elseif (ast.tag == "variable") then
     addCode(state, "load")
-    addCode(state, ast.val)
-  elseif (ast.tag == "assgn") then
-    codeExp(state, ast.exp)
-    addCode(state, "store")
-    addCode(state, ast.id)
+    addCode(state, id2num(state, ast.val))
   end
 end
 
@@ -202,22 +215,21 @@ function codeStat(state, ast)
   if (ast.tag == "assgn") then
     codeExp(state, ast.exp)
     addCode(state, "store")
-    addCode(state, ast.id)
+    addCode(state, id2num(state, ast.id))
   elseif (ast.tag == "seq") then
     codeStat(state, ast.st1)
     codeStat(state, ast.st2)
   elseif (ast.tag == "ret") then
     codeExp(state, ast.exp)
     addCode(state, "return")
-  elseif (ast.tag == "print") then -- [Ex]
-    codeExp(state, ast.exp)        -- [Ex]
-    addCode(state, "print")        -- [Ex]
+  elseif (ast.tag == "print") then
+    codeExp(state, ast.exp)
+    addCode(state, "print")
   end
 end
 
-
 function compile(ast)
-  local state = { code = {} }
+  local state = { code = {}, vars = {}, numVars = 0 }
   codeStat(state, ast)
   return state.code
 end
@@ -237,8 +249,13 @@ function run(code, mem, stack)
       pc = pc + 1     -- we consume two code words for a load.
       top = top + 1
       id = code[pc]
-      stack[top] = mem[id]
-      logStr = logStr .. "\nload " .. code[pc]
+      val = mem[id]                                  -- [Ex]
+      if not val then                                -- [Ex]
+        error("Variable used before it is defined")  -- [Ex]
+      else                                           -- [Ex]
+        stack[top] = mem[id]                         -- [Ex]
+        logStr = logStr .. "\nload " .. code[pc]     -- [Ex]
+      end
     elseif code[pc] == "store" then
       pc = pc + 1
       id = code[pc]
@@ -248,10 +265,10 @@ function run(code, mem, stack)
     elseif code[pc] == "return" then
       logStr = logStr .. "\nreturn " .. stack[top]
       return logStr
-    elseif code[pc] == "print" then                -- [Ex]
-      logStr = logStr .. "\nprint: " .. stack[top] -- [Ex]
-      print(stack[top])                            -- [Ex]
-      top = top - 1                                -- [Ex]
+    elseif code[pc] == "print" then
+      logStr = logStr .. "\nprint: " .. stack[top]
+      print(stack[top])
+      top = top - 1
     elseif code[pc] == "add" then
       top = top - 1
       logStr = logStr .. "\nadd: " .. stack[top] .. " + " .. stack[top + 1]
