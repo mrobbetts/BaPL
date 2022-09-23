@@ -10,6 +10,11 @@ function hexNode(num)
   return { tag = "number", val = tonumber(num, 16) }
 end
 
+-- Parse variable names
+function varNode(var)
+  return { tag = "variable", val = var }
+end
+
 -- Indent a string by two spaces.
 function indent(s)
   return "  " .. s:gsub("\n", "\n  ")
@@ -51,14 +56,19 @@ function foldUnary(lst)
 end
 
 space = lpeg.S(" \n\t")^0
--- number = ((lpeg.P("0x") * (lpeg.R("09", "af")^1 / hexNode)) + (lpeg.R("09")^1 / node)) * space                                        -- [Part a (starting point)]
--- number = ((lpeg.P("0x") * (lpeg.R("09", "af")^1 / hexNode)) + ((lpeg.R("09")^1 * (lpeg.P(".") * lpeg.R("09")^1)^-1) / node)) * space  -- [Part a]
-
-numeral = lpeg.R("09")^1                                                      -- [Part b]
+digit = lpeg.R("09")^1
 hexNumeral = lpeg.R("09", "af")^1
-decimal = numeral * (lpeg.P(".")  * numeral)^-1                               -- [Part b]
-scient  = decimal * (lpeg.S("eE") * numeral)^-1                               -- [Part b]
-number = ((lpeg.P("0x") * (hexNumeral / hexNode)) + (scient / node)) * space  -- [Part b]
+decimal = digit * (lpeg.P(".")  * digit)^-1
+scient  = decimal * (lpeg.S("eE") * digit)^-1
+number = ((lpeg.P("0x") * (hexNumeral / hexNode)) + (scient / node)) * space
+
+alpha = lpeg.R("az", "AZ")            -- [Ex]
+alphanum  = alpha + digit             -- [Ex]
+IDStarter = alpha + lpeg.S("_")       -- [Ex]
+IDValids  = alphanum + lpeg.S("_")    -- [Ex]
+ID = IDStarter * IDValids^0           -- [Ex]
+
+var = (ID / varNode) * space
 
 opP = lpeg.P("(") * space
 clP = lpeg.P(")") * space
@@ -77,7 +87,7 @@ expC = lpeg.V("expC")
 
 grammar = lpeg.P{
   "expC",
-  fact = number + opP * expC * clP,
+  fact = number + (opP * expC * clP) + var,
   expU = (lpeg.Ct(opU * fact) / foldUnary) + fact,
   expE = lpeg.Ct(expU * (opE * expU)^0) / foldBin,
   expM = lpeg.Ct(expE * (opM * expE)^0) / foldBin,
@@ -124,6 +134,9 @@ function codeExp(state, ast)
   elseif (ast.tag == "unop") then
     codeExp(state, ast.e)
     addCode(state, unops[ast.op])
+  elseif (ast.tag == "variable") then
+    addCode(state, "load")
+    addCode(state, ast.val)
   end
 end
 
@@ -134,7 +147,7 @@ function compile(ast)
 end
 
 
-function run(code, stack)
+function run(code, mem, stack)
   pc = 1
   top = 0
   logStr = ""
@@ -195,6 +208,11 @@ function run(code, stack)
       top = top - 1
       logStr = logStr .. "\neq: " .. stack[top] .. " == " .. stack[top + 1]
       stack[top] = stack[top] == stack[top + 1]
+    elseif code[pc] == "load" then
+      pc = pc + 1
+      top = top + 1
+      id = code[pc]
+      stack[top] = mem[id]
     else
       error("Unknown instruction")
     end
@@ -213,7 +231,8 @@ code = compile(ast)
 print("CODE\n".. printTable(code) .. "\n")
 
 stack = {}
-logStr = run(code, stack)
+mem = { _a = 1, _b = 2 }
+logStr = run(code, mem, stack)
 print("RESULT\n" .. tostring(stack[1]))
 
 print("\nINSTRUCTION LOG", logStr)
