@@ -63,6 +63,20 @@ function assignNode(id, exp)
   }
 end
 
+function printNode(exp)
+  return {
+    tag = "print",
+    exp = exp
+  }
+end
+
+function returnNode(exp)
+  return {
+    tag = "ret",
+    exp = exp
+  }
+end
+
 function seqNode(st1, st2)
   if (st2 == nil) then
     return st1
@@ -95,8 +109,9 @@ opP = lpeg.P("(") * space
 clP = lpeg.P(")") * space
 opB = lpeg.P("{") * space
 clB = lpeg.P("}") * space
--- SC  = lpeg.P(";") * space    -- [Ex]
-SC  = (lpeg.P(";") * space)^1   -- [Ex]
+SC  = (lpeg.P(";") * space)^1
+prn = lpeg.P("@") * space
+ret = lpeg.P("return") * space
 
 
 opU = lpeg.C(lpeg.S("-")) * space
@@ -114,6 +129,7 @@ expC = lpeg.V("expC")
 block = lpeg.V("block")
 statement = lpeg.V("statement")
 statements = lpeg.V("statements")
+-- ret = lpeg.V("return")
 
 grammar = lpeg.P{
   "statements",
@@ -124,7 +140,10 @@ grammar = lpeg.P{
   expA = lpeg.Ct(expM * (opA * expM)^0) / foldBin,
   expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,
   block = opB * statements * clB,
-  statement = block + ((ID * assign * expC) / assignNode),
+  statement = block
+            + ((prn * expC) / printNode)
+            + ((ID * assign * expC) / assignNode)
+            + (ret * expC) / returnNode,
   statements = (statement * (SC * statements)^-1 * SC^-1) / seqNode
 }
 
@@ -187,6 +206,12 @@ function codeStat(state, ast)
   elseif (ast.tag == "seq") then
     codeStat(state, ast.st1)
     codeStat(state, ast.st2)
+  elseif (ast.tag == "ret") then
+    codeExp(state, ast.exp)
+    addCode(state, "return")
+  elseif (ast.tag == "print") then -- [Ex]
+    codeExp(state, ast.exp)        -- [Ex]
+    addCode(state, "print")        -- [Ex]
   end
 end
 
@@ -220,6 +245,13 @@ function run(code, mem, stack)
       mem[id] = stack[top]
       top = top - 1
       logStr = logStr .. "\nstore " .. code[pc]
+    elseif code[pc] == "return" then
+      logStr = logStr .. "\nreturn " .. stack[top]
+      return logStr
+    elseif code[pc] == "print" then                -- [Ex]
+      logStr = logStr .. "\nprint: " .. stack[top] -- [Ex]
+      print(stack[top])                            -- [Ex]
+      top = top - 1                                -- [Ex]
     elseif code[pc] == "add" then
       top = top - 1
       logStr = logStr .. "\nadd: " .. stack[top] .. " + " .. stack[top + 1]
@@ -289,9 +321,8 @@ code = compile(ast)
 print("CODE\n".. printTable(code) .. "\n")
 
 stack = {}
-mem   = { _a = 1, _b = 2 }
+mem   = {}
 logStr = run(code, mem, stack)
--- print("RESULT\n" .. tostring(stack[1]))
-print("RESULT\n" .. tostring(mem["result"]))
+print("RESULT\n" .. tostring(stack[1]))
 
 print("\nINSTRUCTION LOG", logStr)
