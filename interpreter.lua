@@ -28,7 +28,7 @@ function printTable(tbl)
     if type(v) == "table" then
       s = s .. "["..k.."]" .. " = {\n" .. indent(printTable(v)) .. "}\n"
     else
-      s = s .. "["..k.."]" .. " = " .. v .. "\n"
+      s = s .. "["..k.."]" .. " = " .. tostring(v) .. "\n"
     end
   end
   return s
@@ -141,13 +141,12 @@ reservedPattern = reservedPattern * -alphanum
 
 -- Function to match the string `w` against any reserved word (simply return
 -- `true` or `false` based on whether it matches)
-function isReserved(w, i)                                          -- [Ex]
-  -- print("Given: " .. i .. " and\n" .. string.sub(w, i))         -- [Ex]
-  return reservedPattern:match(string.sub(w, i)) and true          -- [Ex]
+function isReserved(w, i)
+
+  return reservedPattern:match(string.sub(w, i)) and true
 end
 
--- ID = (lpeg.C(IDStarter * IDValids^0) - reservedPattern) * space --[Ex]
-ID = (lpeg.C(IDStarter * IDValids^0) - lpeg.P(isReserved)) * space --[Ex]
+ID = (lpeg.C(IDStarter * IDValids^0) - lpeg.P(isReserved)) * space
 
 -- Return a general token pattern based on string `t`.
 function T(t)
@@ -156,13 +155,13 @@ end
 
 -- Return a reserved-word pattern based on the string `w`.
 function Rw(w)
-  assert(reservedPattern:match(w))                                 -- [Ex]
+  assert(reservedPattern:match(w))
   return lpeg.P(w) * -alphanum * space
 end
 
 var = ID / varNode
 
-opU = lpeg.C(lpeg.S("-")) * space
+opU = lpeg.C(lpeg.S("-!")) * space
 opA = lpeg.C(lpeg.S("+-")) * space
 opM = lpeg.C(lpeg.S("*/%")) * space
 opE = lpeg.C(lpeg.S("^")) * space
@@ -213,7 +212,8 @@ Compiler = {
   vars = {},
   numVars = 0,
   unops = {
-    ["-"] = "neg"
+    ["-"] = "neg",
+    ["!"] = "not"   -- [Ex]
   },
   binops = {
     ["+"] = "add",
@@ -310,8 +310,10 @@ function run(code, mem, stack)
       top = top + 1
       id = code[pc]
       val = mem[id]
-      if not val then
-        error("Variable used before it is defined")
+      if #mem < id then
+      -- if not val then
+        print(printTable(mem))
+        error("Variable used before it is defined, at [PC " .. pc .. "] (variable " .. id ..")")
       else
         stack[top] = mem[id]
         logStr = logStr .. "\nload " .. code[pc]
@@ -356,6 +358,10 @@ function run(code, mem, stack)
     elseif code[pc] == "neg" then
       logStr = logStr .. "\nneg: " .. "-" .. stack[top]
       stack[top] = -stack[top]
+    elseif code[pc] == "not" then                                     -- [Ex]
+      logStr = logStr .. "\nnot: " .. "!(" .. stack[top] .. ")"       -- [Ex]
+      -- stack[top] = not stack[top]                                  -- [Ex]  (Force return a boolean)
+      if (not stack[top]) then stack[top] = 1 else stack[top] = 0 end -- [Ex]  (return a 0 or 1 as logical result)
     elseif code[pc] == "lte" then
       top = top - 1
       logStr = logStr .. "\nlte: " .. stack[top] .. " <= " .. stack[top + 1]
