@@ -99,7 +99,7 @@ IDStarter = alpha + lpeg.S("_")
 IDValids  = alphanum + lpeg.S("_")
 
 -- List of reserved words.
-reservedWords = { "return", "if", "elseif", "else" } -- [Ex]
+reservedWords = { "return", "if", "elseif", "else", "while", "and", "or" } -- [Ex]
 
 -- Build a pattern to match any reserved word.
 reservedPattern = lpeg.P(false)
@@ -126,7 +126,7 @@ end
 
 -- Return a reserved-word pattern based on the string `w`.
 function Rw(w)
-  print("Reserved word pattern: " .. w)
+  -- print("Reserved word pattern: " .. w)
   assert(reservedPattern:match(w))
   return lpeg.P(w) * -alphanum * space
 end
@@ -138,6 +138,7 @@ opA = lpeg.C(lpeg.S("+-")) * space
 opM = lpeg.C(lpeg.S("*/%")) * space
 opE = lpeg.C(lpeg.S("^")) * space
 opC = lpeg.C(lpeg.P("<=") + "<" + ">=" + ">" + "!=" + "==") * space
+-- opL = lpeg.C(lpeg.P("and")) * space       -- [Ex]
 
 fact = lpeg.V("fact")
 expU = lpeg.V("expU")
@@ -145,28 +146,35 @@ expE = lpeg.V("expE")
 expM = lpeg.V("expM")
 expA = lpeg.V("expA")
 expC = lpeg.V("expC")
+expL = lpeg.V("expL")                      -- [Ex]
+expr = lpeg.V("expr")                      -- [Ex]
 if1  = lpeg.V("if1")
 elif = lpeg.V("elif")
+while1 = lpeg.V("while1")
 block = lpeg.V("block")
 statement = lpeg.V("statement")
 statements = lpeg.V("statements")
 
 grammar = lpeg.P{
   "statements",
-  fact = number + (T("(") * expC * T(")")) + var,
+  fact = number + (T("(") * expr * T(")")) + var,
   expU = ((opU * fact)                  / node("unop", "op", "exp")) + fact,
   expE = lpeg.Ct(expU * (opE * expU)^0) / foldBin,
   expM = lpeg.Ct(expE * (opM * expE)^0) / foldBin,
   expA = lpeg.Ct(expM * (opA * expM)^0) / foldBin,
   expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,
-  elif = ((Rw("elseif") * expC * block) * (elif + Rw("else") * block)^-1) / node("if1", "cond", "th", "el"), -- [Ex]
-  if1  = ((Rw("if")     * expC * block) * (elif + Rw("else") * block)^-1) / node("if1", "cond", "th", "el"), -- [Ex]
+  expL = ((expC * (Rw("and") * expL)) / node("and1", "e1", "e2")) + ((expC * (Rw("or") * expL)) / node("or1", "e1", "e2")) + expC,  -- [Ex]
+  expr = expL,
+  elif = ((Rw("elseif") * expr * block) * (elif + Rw("else") * block)^-1) / node("if1", "cond", "th", "el"),
+  if1  = ((Rw("if")     * expr * block) * (elif + Rw("else") * block)^-1) / node("if1", "cond", "th", "el"),
+  while1 = (Rw("while") * expr * block) / node("while1", "cond", "body"),
   block = T("{") * statements * T("}"),
   statement = block
             + if1
-            + ((T("@") * expC)          / node("print", "exp"))
-            + ((ID * T("=") * expC)     / node("assgn", "id", "exp"))
-            + ((Rw("return") * expC)    / node("ret", "exp")),
+            + while1
+            + ((T("@") * expr)          / node("print", "exp"))
+            + ((ID * T("=") * expr)     / node("assgn", "id", "exp"))
+            + ((Rw("return") * expr)    / node("ret", "exp")),
   statements = (statement * (T(";") * statements)^-1 * T(";")^-1) / seqNode
 }
 
@@ -245,6 +253,20 @@ function Compiler:codeExp(ast)
     self:codeExp(ast.e1)
     self:codeExp(ast.e2)
     self:addCode(self.binops[ast.op])
+  elseif (ast.tag == "and1") then                -- [Ex]
+      self:codeExp(ast.e1)                       -- [Ex]
+      local l1 = self:addJump("jmpzp")           -- [Ex]
+      self:codeExp(ast.e2)                       -- [Ex]
+                                                 -- [Ex]
+      -- Fix l1 to jump to the end of the `and`. -- [Ex]
+      self.code[l1] = #(self.code) - l1          -- [Ex]
+  elseif (ast.tag == "or1") then                 -- [Ex]
+      self:codeExp(ast.e1)                       -- [Ex]
+      local l1 = self:addJump("jmpnzp")          -- [Ex]
+      self:codeExp(ast.e2)                       -- [Ex]
+                                                 -- [Ex]
+      -- Fix l1 to jump to the end of the `or`.  -- [Ex]
+      self.code[l1] = #(self.code) - l1          -- [Ex]
   elseif (ast.tag == "unop") then
     self:codeExp(ast.exp)
     self:addCode(self.unops[ast.op])
@@ -278,23 +300,37 @@ function Compiler:codeStat(ast)
     -- Add the code for the Then.
     self:codeStat(ast.th)
 
-    if (ast.el) then                                                   -- [Ex]
-      -- Jump over (what will be) the Else, now the Then is complete.  -- [Ex]
-      local l2 = self:addJump("jmp")                                   -- [Ex]
+    if (ast.el) then
+      -- Jump over (what will be) the Else, now the Then is complete.
+      local l2 = self:addJump("jmp")
 
-      -- Fix l1 to jump to the beginning of the Else.                  -- [Ex]
-      self.code[l1] = #(self.code) - l1                                -- [Ex]
+      -- Fix l1 to jump to the beginning of the Else.
+      self.code[l1] = #(self.code) - l1
 
-    -- Now the Else                                                    -- [Ex]
-      self:codeStat(ast.el)                                            -- [Ex]
+    -- Now the Else
+      self:codeStat(ast.el)
 
-      -- Fix l2 to jump to the end of the Else.                        -- [Ex]
-      self.code[l2] = #(self.code) - l2                                -- [Ex]
+      -- Fix l2 to jump to the end of the Else.
+      self.code[l2] = #(self.code) - l2
 
-    else                                                               -- [Ex]
+    else
       -- Fix l1 to jump to the end of the Then.
       self.code[l1] = #(self.code) - l1
     end
+  elseif (ast.tag == "while1") then -- While
+    local l1 = #self.code -- Save this to jump back to.
+    self:codeExp(ast.cond)
+
+    local l2 = self:addJump("jmpz") -- Skip the body if condition is false
+
+    self:codeStat(ast.body)
+
+    -- Jump back to the conditional, to evalute for the next iteration.
+    self:addCode("jmp")
+    self:addCode(l1 - #(self.code) - 1)
+
+    -- Fix up the l2 jump to land here.
+    self.code[l2] = #(self.code) - l2
   end
 end
 
@@ -334,7 +370,7 @@ function run(code, mem, stack)
       top = top - 1
       logStr = logStr .. "\nstore " .. code[pc]
     elseif code[pc] == "return" then
-      logStr = logStr .. "\nreturn " .. stack[top]
+      logStr = logStr .. "\nreturn " .. tostring(stack[top])
       return logStr
     elseif code[pc] == "print" then
       logStr = logStr .. "\nprint: " .. stack[top]
@@ -343,7 +379,9 @@ function run(code, mem, stack)
     elseif code[pc] == "jmpz" then
       -- print("jmpz")
       top = top - 1
-      if (stack[top + 1] == 0) then -- perform the jump / condition is false
+      -- if (stack[top + 1] == 0) then -- perform the jump / condition is false
+      -- if (not stack[top + 1]) then -- perform the jump / condition is false
+      if (not stack[top + 1] or stack[top + 1] == 0) then -- perform the jump / condition is false
         logStr = logStr .. "\njmp " .. code[pc + 1]
         pc = pc + code[pc + 1] + 1
       else
@@ -352,10 +390,37 @@ function run(code, mem, stack)
       end
       -- print("PC after jump: " .. pc)
     elseif code[pc] == "jmp" then
-      top = top - 1
       logStr = logStr .. "\njmp " .. code[pc + 1]
       pc = pc + code[pc + 1] + 1
       -- print("PC after jump: " .. pc)
+    elseif code[pc] == "jmpzp" then                                            -- [Ex]
+      -- Implements short-circuiting `and`. Evaluates first operand, and:      -- [Ex]
+      -- - If non-false, pops the result and continues (to second operand).    -- [Ex]
+      -- - If false, leaves the result in place and jumps over the second.     -- [Ex]
+      if (not stack[top] or stack[top] == 0) then                              -- [Ex]
+        -- Perform the jump to the address in the next code word.              -- [Ex]
+        logStr = logStr .. "\njmpzp: " .. code[pc + 1]                         -- [Ex]
+        pc = pc + code[pc + 1] + 1                                             -- [Ex]
+      else                                                                     -- [Ex]
+        -- Pop the stack (we know is non-false) and continue.                  -- [Ex]
+        logStr = logStr .. "\njmpzp: nop"                                      -- [Ex]
+        top = top - 1                                                          -- [Ex]
+        pc = pc + 1                                                            -- [Ex]
+      end                                                                      -- [Ex]
+    elseif code[pc] == "jmpnzp" then                                           -- [Ex]
+      -- Implements short-circuiting `or`. Evaluates first operand, and:       -- [Ex]
+      -- - If non-false, leaves the result in place and jumps over the second. -- [Ex]
+      -- - If false, pops the result and continues (to second operand).        -- [Ex]
+      if (stack[top] and stack[top] ~= 0) then                                 -- [Ex]
+        -- Perform the jump to the address in the next code word.              -- [Ex]
+        logStr = logStr .. "\njmpnzp: " .. code[pc + 1]                        -- [Ex]
+        pc = pc + code[pc + 1] + 1                                             -- [Ex]
+      else                                                                     -- [Ex]
+        -- Pop the stack (we know is non-false) and continue.                  -- [Ex]
+        logStr = logStr .. "\njmpzp: nop"                                      -- [Ex]
+        top = top - 1                                                          -- [Ex]
+        pc = pc + 1                                                            -- [Ex]
+      end
     elseif code[pc] == "add" then
       top = top - 1
       logStr = logStr .. "\nadd: " .. stack[top] .. " + " .. stack[top + 1]
@@ -394,7 +459,9 @@ function run(code, mem, stack)
     elseif code[pc] == "lt" then
       top = top - 1
       logStr = logStr .. "\nlt: " .. stack[top] .. " < " .. stack[top + 1]
+      print("lt: " .. stack[top] .. " < " .. stack[top + 1] .. "?" )
       stack[top] = stack[top] < stack[top + 1]
+      print("after lt: " .. tostring(stack[top]))
     elseif code[pc] == "gte" then
       top = top - 1
       logStr = logStr .. "\ngte: " .. stack[top] .. " >= " .. stack[top + 1]
@@ -434,5 +501,7 @@ stack = {}
 mem   = {}
 logStr = run(code, mem, stack)
 print("RESULT\n" .. tostring(stack[1]))
+
+-- print("stack: " .. printTable(stack))
 
 print("\nINSTRUCTION LOG", logStr)
