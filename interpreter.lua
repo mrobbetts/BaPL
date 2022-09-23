@@ -89,7 +89,27 @@ function seqNode(st1, st2)
   end
 end
 
-space = lpeg.S(" \n\t")^0
+-- Determine the line within `str` of character index `n`.
+function getLineOf(str, n)                                    -- [Ex]
+  -- Find the first newline in str.                           -- [Ex]
+  i = string.find(str, "\n", 1)                               -- [Ex]
+  if i and n >= i then                                        -- [Ex]
+    -- The newline was before character n; recurse.           -- [Ex]
+    return 1 + getLineOf(string.sub(str, i + 1), n - (i + 1)) -- [Ex]
+  else                                                        -- [Ex]
+    -- Character n was before any newline; sentinel.          -- [Ex]
+    return 1                                                  -- [Ex]
+  end
+end
+
+extent = 0                                          -- [Ex]
+function posCheck(pattern, i)                       -- [Ex]
+  extent = math.max(extent, i)                      -- [Ex]
+  return true                                       -- [Ex]
+end
+
+space = lpeg.S(" \t\n")^0 * lpeg.P(posCheck)
+-- space = lpeg.S(" \n")^0
 digit = lpeg.R("09")^1
 hexNumeral = lpeg.R("09", "af")^1
 decimal = digit * (lpeg.P(".")  * digit)^-1
@@ -129,7 +149,6 @@ expC = lpeg.V("expC")
 block = lpeg.V("block")
 statement = lpeg.V("statement")
 statements = lpeg.V("statements")
--- ret = lpeg.V("return")
 
 grammar = lpeg.P{
   "statements",
@@ -141,16 +160,22 @@ grammar = lpeg.P{
   expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,
   block = opB * statements * clB,
   statement = block
-            + ((prn * expC) / printNode)
+            + ((prn * expC)         / printNode )
             + ((ID * assign * expC) / assignNode)
-            + (ret * expC) / returnNode,
+            + ((ret * expC)         / returnNode),
   statements = (statement * (SC * statements)^-1 * SC^-1) / seqNode
 }
 
 grammar = grammar * -1
 
 function parse(code)
-  return grammar:match(code)
+  ast = grammar:match(code)                                                      -- [Ex]
+  if not ast then                                                                -- [Ex]
+    print("error, at " .. extent .. " (line " .. getLineOf(code, extent) .. ")") -- [Ex]
+    os.exit(1)                                                                   -- [Ex]
+  else                                                                           -- [Ex]
+    return ast                                                                   -- [Ex]
+  end                                                                            -- [Ex]
 end
 
 function addCode(state, op)
@@ -249,12 +274,12 @@ function run(code, mem, stack)
       pc = pc + 1     -- we consume two code words for a load.
       top = top + 1
       id = code[pc]
-      val = mem[id]                                  -- [Ex]
-      if not val then                                -- [Ex]
-        error("Variable used before it is defined")  -- [Ex]
-      else                                           -- [Ex]
-        stack[top] = mem[id]                         -- [Ex]
-        logStr = logStr .. "\nload " .. code[pc]     -- [Ex]
+      val = mem[id]
+      if not val then
+        error("Variable used before it is defined")
+      else
+        stack[top] = mem[id]
+        logStr = logStr .. "\nload " .. code[pc]
       end
     elseif code[pc] == "store" then
       pc = pc + 1
@@ -328,7 +353,7 @@ function run(code, mem, stack)
   return logStr
 end
 
-input = io.read()
+input = io.read("*all")
 print("INPUT STRING\n" .. input .. "\n")
 
 ast = parse(input)
