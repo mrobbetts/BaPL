@@ -1,33 +1,46 @@
 lpeg = require "lpeg"
--- pt = require "pt"
 
-space = lpeg.P(" ")^0
-numeral = (lpeg.R("09")^1 / tonumber) * space
-
-opE = lpeg.C(lpeg.S("^")) * space
-opM = lpeg.C(lpeg.S("*/%")) * space
-opA = lpeg.C(lpeg.S("+-")) * space
-
-function fold(lst)
-  acc = lst[1]
-  for i = 2, #lst, 2 do
-    if (lst[i] == "+") then
-      acc = acc + lst[i + 1]
-    elseif (lst[i] == "-") then
-      acc = acc - lst[i + 1]
-    elseif (lst[i] == "*") then
-      acc = acc * lst[i + 1]
-    elseif (lst[i] == "/") then
-      acc = acc / lst[i + 1]
-    elseif (lst[i] == "%") then
-      acc = acc % lst[i + 1]
-    elseif (lst[i] == "^") then
-      acc = acc ^ lst[i + 1]
-    end
-  end
-  return acc
+function node(num)
+  return { tag = "number", val = tonumber(num) }
 end
 
-exp = space * lpeg.Ct(numeral * (opE * numeral)^0) / fold
-term = space * lpeg.Ct(exp * (opM * exp)^0) / fold
-sum = space * (lpeg.Ct(term * (opA * term)^0) / fold) * -lpeg.P(1)
+function hexNode(num)
+  return { tag = "number", val = tonumber(num, 16) }
+end
+
+space = lpeg.S(" \n\t")^0
+-- numeral = (lpeg.R("09")^1 / node) * space
+numeral = ((lpeg.P("0x") * (lpeg.R("09", "af")^1 / hexNode)) + (lpeg.R("09")^1 / node)) * space
+
+function parse(code)
+  return numeral:match(code)
+end
+
+function compile(ast)
+  if ast.tag == "number" then return { "push", ast.val }
+  -- else error("Unknown instruction")
+  end
+end
+
+function run(code, stack)
+  pc = 1
+  top = 0
+  while (pc <= #code) do
+    if code[pc] == "push" then
+      pc = pc + 1
+      top = top + 1
+      stack[top] = code[pc]
+    else
+      error("Unknown instruction")
+    end
+    pc = pc + 1
+  end
+end
+
+input = io.read()
+ast = parse(input)
+code = compile(ast)
+
+stack = {}
+result = run(code, stack)
+print("Result", stack[1])
