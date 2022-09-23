@@ -108,12 +108,12 @@ function posCheck(pattern, i)
   return true
 end
 
-lineComment = "#" * (lpeg.P(1) - "\n")^0             -- [Ex]
-blockComment = "#{" * (lpeg.P(1) - "#}")^0 * "#}"    -- [Ex]
+lineComment = "#" * (lpeg.P(1) - "\n")^0
+blockComment = "#{" * (lpeg.P(1) - "#}")^0 * "#}"
 
-space = (lpeg.S(" \t\n")                             -- [Ex]
-         + blockComment                              -- [Ex]
-         + lineComment)^0                            -- [Ex]
+space = (lpeg.S(" \t\n")
+         + blockComment
+         + lineComment)^0
       * lpeg.P(posCheck)
 
 digit = lpeg.R("09")^1
@@ -126,19 +126,41 @@ alpha = lpeg.R("az", "AZ")
 alphanum  = alpha + digit
 IDStarter = alpha + lpeg.S("_")
 IDValids  = alphanum + lpeg.S("_")
-ID = lpeg.C(IDStarter * IDValids^0) * space
+
+-- List of reserved words.
+reservedWords = { "return", "if", "else" }
+
+-- Build a pattern to match any reserved word.
+reservedPattern = lpeg.P(false)
+for _, w in ipairs(reservedWords) do
+  reservedPattern = reservedPattern + w
+end
+-- Follow the matching pattern with a -alphanum to exclude IDs that simply
+-- start with a reserved word.
+reservedPattern = reservedPattern * -alphanum
+
+-- Function to match the string `w` against any reserved word (simply return
+-- `true` or `false` based on whether it matches)
+function isReserved(w, i)                                          -- [Ex]
+  -- print("Given: " .. i .. " and\n" .. string.sub(w, i))         -- [Ex]
+  return reservedPattern:match(string.sub(w, i)) and true          -- [Ex]
+end
+
+-- ID = (lpeg.C(IDStarter * IDValids^0) - reservedPattern) * space --[Ex]
+ID = (lpeg.C(IDStarter * IDValids^0) - lpeg.P(isReserved)) * space --[Ex]
+
+-- Return a general token pattern based on string `t`.
+function T(t)
+  return lpeg.P(t) * space
+end
+
+-- Return a reserved-word pattern based on the string `w`.
+function Rw(w)
+  assert(reservedPattern:match(w))                                 -- [Ex]
+  return lpeg.P(w) * -alphanum * space
+end
 
 var = ID / varNode
-assign = space * lpeg.P("=") * space
-
-opP = lpeg.P("(") * space
-clP = lpeg.P(")") * space
-opB = lpeg.P("{") * space
-clB = lpeg.P("}") * space
-SC  = (lpeg.P(";") * space)^1
-prn = lpeg.P("@") * space
-ret = lpeg.P("return") * space
-
 
 opU = lpeg.C(lpeg.S("-")) * space
 opA = lpeg.C(lpeg.S("+-")) * space
@@ -158,18 +180,18 @@ statements = lpeg.V("statements")
 
 grammar = lpeg.P{
   "statements",
-  fact = number + (opP * expC * clP) + var,
+  fact = number + (T("(") * expC * T(")")) + var,
   expU = ((opU * fact) / unaryNode) + fact,
   expE = lpeg.Ct(expU * (opE * expU)^0) / foldBin,
   expM = lpeg.Ct(expE * (opM * expE)^0) / foldBin,
   expA = lpeg.Ct(expM * (opA * expM)^0) / foldBin,
   expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,
-  block = opB * statements * clB,
+  block = T("{") * statements * T("}"),
   statement = block
-            + ((prn * expC)         / printNode )
-            + ((ID * assign * expC) / assignNode)
-            + ((ret * expC)         / returnNode),
-  statements = (statement * (SC * statements)^-1 * SC^-1) / seqNode
+            + ((T("@") * expC)          / printNode )
+            + ((ID * T("=") * expC)     / assignNode)
+            + ((Rw("return") * expC)    / returnNode),
+  statements = (statement * (T(";") * statements)^-1 * T(";")^-1) / seqNode
 }
 
 grammar = grammar * -1
