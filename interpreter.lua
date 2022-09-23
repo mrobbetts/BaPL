@@ -196,6 +196,7 @@ grammar = lpeg.P{
 
 grammar = grammar * -1
 
+
 function parse(code)
   ast = grammar:match(code)
   if not ast then
@@ -206,32 +207,37 @@ function parse(code)
   end
 end
 
-function addCode(state, op)
-  local code = state.code
+-- Begin Compiler type definition
+Compiler = {
+  code = {},
+  vars = {},
+  numVars = 0,
+  unops = {
+    ["-"] = "neg"
+  },
+  binops = {
+    ["+"] = "add",
+    ["-"] = "sub",
+    ["*"] = "mul",
+    ["/"] = "div",
+    ["%"] = "mod",
+    ["^"] = "exp",
+    ["<"]  = "lt",
+    ["<="] = "lte",
+    [">"]  = "gt",
+    [">="] = "gte",
+    ["=="] = "eq",
+    ["!="] = "neq"
+  }
+}
+
+function Compiler:addCode(op)
+  local code = self.code
   code[#code + 1] = op
 end
 
-binops = {
-  ["+"] = "add",
-  ["-"] = "sub",
-  ["*"] = "mul",
-  ["/"] = "div",
-  ["%"] = "mod",
-  ["^"] = "exp",
-  ["<"]  = "lt",
-  ["<="] = "lte",
-  [">"]  = "gt",
-  [">="] = "gte",
-  ["=="] = "eq",
-  ["!="] = "neq"
-}
-
-unops = {
-  ["-"] = "neg"
-}
-
-function idInUse(state, id)
-  index = state.vars[id]
+function Compiler:idInUse(id)
+  index = self.vars[id]
   if not index then
     return false
   else
@@ -239,52 +245,53 @@ function idInUse(state, id)
   end
 end
 
-function id2num(state, id)
-  if not idInUse(state, id) then
-    state.numVars = state.numVars + 1
-    state.vars[id] = state.numVars
+function Compiler:id2num(id)
+  if not self:idInUse(id) then
+    self.numVars = self.numVars + 1
+    self.vars[id] = self.numVars
   end
-  return state.vars[id]
+  return self.vars[id]
 end
 
-function codeExp(state, ast)
+-- Encode the root of the AST as an expression.
+function Compiler:codeExp(ast)
   if (ast.tag == "number") then
-    addCode(state, "push")
-    addCode(state, ast.val)
+    self:addCode("push")
+    self:addCode(ast.val)
   elseif (ast.tag == "binop") then
-    codeExp(state, ast.e1)
-    codeExp(state, ast.e2)
-    addCode(state, binops[ast.op])
+    self:codeExp(ast.e1)
+    self:codeExp(ast.e2)
+    self:addCode(self.binops[ast.op])
   elseif (ast.tag == "unop") then
-    codeExp(state, ast.e)
-    addCode(state, unops[ast.op])
+    self:codeExp(ast.e)
+    self:addCode(self.unops[ast.op])
   elseif (ast.tag == "variable") then
-    addCode(state, "load")
-    addCode(state, id2num(state, ast.val))
+    self:addCode("load")
+    self:addCode(self:id2num(ast.val))
   end
 end
 
-function codeStat(state, ast)
+-- Encode the root of the AST as a statement.
+function Compiler:codeStat(ast)
   if (ast.tag == "assgn") then
-    codeExp(state, ast.exp)
-    addCode(state, "store")
-    addCode(state, id2num(state, ast.id))
+    self:codeExp(ast.exp)
+    self:addCode("store")
+    self:addCode(self:id2num(ast.id))
   elseif (ast.tag == "seq") then
-    codeStat(state, ast.st1)
-    codeStat(state, ast.st2)
+    self:codeStat(ast.st1)
+    self:codeStat(ast.st2)
   elseif (ast.tag == "ret") then
-    codeExp(state, ast.exp)
-    addCode(state, "return")
+    self:codeExp(ast.exp)
+    self:addCode("return")
   elseif (ast.tag == "print") then
-    codeExp(state, ast.exp)
-    addCode(state, "print")
+    self:codeExp(ast.exp)
+    self:addCode("print")
   end
 end
 
-function compile(ast)
-  local state = { code = {}, vars = {}, numVars = 0 }
-  codeStat(state, ast)
-  return state.code
+function Compiler:compile(ast)
+  self:codeStat(ast)
+  return self.code
 end
 
 
@@ -387,7 +394,9 @@ print("INPUT STRING\n" .. input .. "\n")
 ast = parse(input)
 print("AST\n" .. printTable(ast) .. "\n")
 
-code = compile(ast)
+compiler = Compiler
+code = compiler:compile(ast)
+-- code = compile(ast)
 print("CODE\n".. printTable(code) .. "\n")
 
 stack = {}
