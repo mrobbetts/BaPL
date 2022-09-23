@@ -368,7 +368,12 @@ end
 
 function printableValue(v)
   if (type(v) == "table") then
-    return "array[" .. v.size .. "]"
+    s = "array[" .. v.size .. "] {" .. tostring(v[1]);      -- [Ex]
+    for i = 2, #v do                                        -- [Ex]
+      s = s .. ", " .. v[i]                                 -- [Ex]
+    end                                                     -- [Ex]
+    s = s .. "}"                                            -- [Ex]
+    return s                                                -- [Ex]
   else
     return v
   end
@@ -411,8 +416,8 @@ function run(code, mem, stack)
     elseif code[pc] == "array_load" then
       local index = stack[top]
       local array = stack[top - 1]
-      if index > array.size then                                                           -- [Ex]
-        error("Index (" .. index .. ") out of range (array size is " .. array.size .. ")") -- [Ex]
+      if index > array.size then
+        error("Index (" .. index .. ") out of range (array size is " .. array.size .. ")")
       else
         logStr = logStr .. "\narray_load  " .. (top - 1) .. "[" .. index .. "]" .. " -> " .. array[index]
         top = top - 1
@@ -422,8 +427,8 @@ function run(code, mem, stack)
       local value = stack[top]
       local index = stack[top - 1]
       local array = stack[top - 2]
-      if index > array.size then                                                           -- [Ex]
-        error("Index (" .. index .. ") out of range (array size is " .. array.size .. ")") -- [Ex]
+      if index > array.size then
+        error("Index (" .. index .. ") out of range (array size is " .. array.size .. ")")
       else
         array[index] = value
         logStr = logStr .. "\narray_store " .. top - 2 .. "[" .. index .. "]" .. " <- " .. value
@@ -433,8 +438,8 @@ function run(code, mem, stack)
       logStr = logStr .. "\nreturn  " .. tostring(stack[top])
       return logStr
     elseif code[pc] == "print" then
-      logStr = logStr .. "\nprint       " .. stack[top]
-      print(stack[top])
+      logStr = logStr .. "\nprint       \"" .. printableValue(stack[top]) .. "\"" -- [Ex]
+      print(printableValue(stack[top]))                                           -- [Ex]
       top = top - 1
     elseif code[pc] == "jmpz" then
       top = top - 1
@@ -554,7 +559,7 @@ print("CODE\n".. printTable(code) .. "\n")
 stack = {}
 mem   = {}
 logStr = run(code, mem, stack)
-print("RESULT\n" .. tostring(stack[1]))
+print("\nRESULT\n" .. tostring(stack[1]))
 
 -- print("stack: " .. printTable(stack))
 
