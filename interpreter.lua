@@ -47,12 +47,32 @@ function foldBin(lst)
   return tree
 end
 
-function foldUnary(lst)
+function unaryNode(op, exp)
   return {
     tag = "unop",
-    op = lst[1],
-    e  = lst[2]
+    op = op,
+    e  = exp
   }
+end
+
+function assignNode(id, exp)
+  return {
+    tag = "assgn",
+    id = id,
+    exp = exp
+  }
+end
+
+function seqNode(st1, st2)
+  if (st2 == nil) then
+    return st1
+  else
+    return {
+      tag = "seq",
+      st1 = st1,
+      st2 = st2
+    }
+  end
 end
 
 space = lpeg.S(" \n\t")^0
@@ -62,16 +82,23 @@ decimal = digit * (lpeg.P(".")  * digit)^-1
 scient  = decimal * (lpeg.S("eE") * digit)^-1
 number = ((lpeg.P("0x") * (hexNumeral / hexNode)) + (scient / node)) * space
 
-alpha = lpeg.R("az", "AZ")            -- [Ex]
-alphanum  = alpha + digit             -- [Ex]
-IDStarter = alpha + lpeg.S("_")       -- [Ex]
-IDValids  = alphanum + lpeg.S("_")    -- [Ex]
-ID = IDStarter * IDValids^0           -- [Ex]
+alpha = lpeg.R("az", "AZ")
+alphanum  = alpha + digit
+IDStarter = alpha + lpeg.S("_")
+IDValids  = alphanum + lpeg.S("_")
+ID = lpeg.C(IDStarter * IDValids^0) * space
 
-var = (ID / varNode) * space
+var = ID / varNode
+assign = space * lpeg.P("=") * space
 
 opP = lpeg.P("(") * space
 clP = lpeg.P(")") * space
+opB = lpeg.P("{") * space
+clB = lpeg.P("}") * space
+-- SC  = lpeg.P(";") * space    -- [Ex]
+SC  = (lpeg.P(";") * space)^1   -- [Ex]
+
+
 opU = lpeg.C(lpeg.S("-")) * space
 opA = lpeg.C(lpeg.S("+-")) * space
 opM = lpeg.C(lpeg.S("*/%")) * space
@@ -84,16 +111,24 @@ expE = lpeg.V("expE")
 expM = lpeg.V("expM")
 expA = lpeg.V("expA")
 expC = lpeg.V("expC")
+block = lpeg.V("block")
+statement = lpeg.V("statement")
+statements = lpeg.V("statements")
 
 grammar = lpeg.P{
-  "expC",
+  "statements",
   fact = number + (opP * expC * clP) + var,
-  expU = (lpeg.Ct(opU * fact) / foldUnary) + fact,
+  expU = ((opU * fact) / unaryNode) + fact,
   expE = lpeg.Ct(expU * (opE * expU)^0) / foldBin,
   expM = lpeg.Ct(expE * (opM * expE)^0) / foldBin,
   expA = lpeg.Ct(expM * (opA * expM)^0) / foldBin,
   expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,
+  block = opB * statements * clB,
+  statement = block + ((ID * assign * expC) / assignNode),
+  statements = (statement * (SC * statements)^-1 * SC^-1) / seqNode
 }
+
+grammar = grammar * -1
 
 function parse(code)
   return grammar:match(code)
@@ -124,7 +159,7 @@ unops = {
 }
 
 function codeExp(state, ast)
-  if ast.tag == "number" then
+  if (ast.tag == "number") then
     addCode(state, "push")
     addCode(state, ast.val)
   elseif (ast.tag == "binop") then
@@ -137,12 +172,28 @@ function codeExp(state, ast)
   elseif (ast.tag == "variable") then
     addCode(state, "load")
     addCode(state, ast.val)
+  elseif (ast.tag == "assgn") then
+    codeExp(state, ast.exp)
+    addCode(state, "store")
+    addCode(state, ast.id)
   end
 end
 
+function codeStat(state, ast)
+  if (ast.tag == "assgn") then
+    codeExp(state, ast.exp)
+    addCode(state, "store")
+    addCode(state, ast.id)
+  elseif (ast.tag == "seq") then
+    codeStat(state, ast.st1)
+    codeStat(state, ast.st2)
+  end
+end
+
+
 function compile(ast)
   local state = { code = {} }
-  codeExp(state, ast)
+  codeStat(state, ast)
   return state.code
 end
 
@@ -157,6 +208,18 @@ function run(code, mem, stack)
       top = top + 1
       stack[top] = code[pc]
       logStr = logStr .. "\npush " .. code[pc]
+    elseif code[pc] == "load" then
+      pc = pc + 1     -- we consume two code words for a load.
+      top = top + 1
+      id = code[pc]
+      stack[top] = mem[id]
+      logStr = logStr .. "\nload " .. code[pc]
+    elseif code[pc] == "store" then
+      pc = pc + 1
+      id = code[pc]
+      mem[id] = stack[top]
+      top = top - 1
+      logStr = logStr .. "\nstore " .. code[pc]
     elseif code[pc] == "add" then
       top = top - 1
       logStr = logStr .. "\nadd: " .. stack[top] .. " + " .. stack[top + 1]
@@ -208,11 +271,6 @@ function run(code, mem, stack)
       top = top - 1
       logStr = logStr .. "\neq: " .. stack[top] .. " == " .. stack[top + 1]
       stack[top] = stack[top] == stack[top + 1]
-    elseif code[pc] == "load" then
-      pc = pc + 1
-      top = top + 1
-      id = code[pc]
-      stack[top] = mem[id]
     else
       error("Unknown instruction")
     end
@@ -231,8 +289,9 @@ code = compile(ast)
 print("CODE\n".. printTable(code) .. "\n")
 
 stack = {}
-mem = { _a = 1, _b = 2 }
+mem   = { _a = 1, _b = 2 }
 logStr = run(code, mem, stack)
-print("RESULT\n" .. tostring(stack[1]))
+-- print("RESULT\n" .. tostring(stack[1]))
+print("RESULT\n" .. tostring(mem["result"]))
 
 print("\nINSTRUCTION LOG", logStr)
