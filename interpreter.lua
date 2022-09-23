@@ -42,7 +42,6 @@ function foldBin(lst)
   return tree
 end
 
--- [Part a]
 function foldUnary(lst)
   return {
     tag = "unop",
@@ -52,32 +51,38 @@ function foldUnary(lst)
 end
 
 space = lpeg.S(" \n\t")^0
-number = ((lpeg.P("0x") * (lpeg.R("09", "af")^1 / hexNode)) + (lpeg.R("09")^1 / node)) * space
+-- number = ((lpeg.P("0x") * (lpeg.R("09", "af")^1 / hexNode)) + (lpeg.R("09")^1 / node)) * space                                        -- [Part a (starting point)]
+-- number = ((lpeg.P("0x") * (lpeg.R("09", "af")^1 / hexNode)) + ((lpeg.R("09")^1 * (lpeg.P(".") * lpeg.R("09")^1)^-1) / node)) * space  -- [Part a]
+
+numeral = lpeg.R("09")^1                                                      -- [Part b]
+hexNumeral = lpeg.R("09", "af")^1
+decimal = numeral * (lpeg.P(".")  * numeral)^-1                               -- [Part b]
+scient  = decimal * (lpeg.S("eE") * numeral)^-1                               -- [Part b]
+number = ((lpeg.P("0x") * (hexNumeral / hexNode)) + (scient / node)) * space  -- [Part b]
 
 opP = lpeg.P("(") * space
 clP = lpeg.P(")") * space
-opU = lpeg.C(lpeg.S("-")) * space     -- [Part a]
+opU = lpeg.C(lpeg.S("-")) * space
 opA = lpeg.C(lpeg.S("+-")) * space
 opM = lpeg.C(lpeg.S("*/%")) * space
 opE = lpeg.C(lpeg.S("^")) * space
-opE = lpeg.C(lpeg.S("^")) * space
-opC = lpeg.C(lpeg.P("<=") + "<" + ">=" + ">" + "!=" + "==") * space -- [Part b]
+opC = lpeg.C(lpeg.P("<=") + "<" + ">=" + ">" + "!=" + "==") * space
 
 fact = lpeg.V("fact")
 expU = lpeg.V("expU")
 expE = lpeg.V("expE")
 expM = lpeg.V("expM")
 expA = lpeg.V("expA")
-expC = lpeg.V("expC") -- [Part b]
+expC = lpeg.V("expC")
 
 grammar = lpeg.P{
   "expC",
   fact = number + opP * expC * clP,
-  expU = (lpeg.Ct(opU * fact) / foldUnary) + fact,    -- [Part a]
+  expU = (lpeg.Ct(opU * fact) / foldUnary) + fact,
   expE = lpeg.Ct(expU * (opE * expU)^0) / foldBin,
   expM = lpeg.Ct(expE * (opM * expE)^0) / foldBin,
   expA = lpeg.Ct(expM * (opA * expM)^0) / foldBin,
-  expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,    -- [Part b]
+  expC = lpeg.Ct(expA * (opC * expA)^0) / foldBin,
 }
 
 function parse(code)
@@ -96,12 +101,12 @@ binops = {
   ["/"] = "div",
   ["%"] = "mod",
   ["^"] = "exp",
-  ["<"]  = "lt",  -- [Part b]
-  ["<="] = "lte", -- [Part b]
-  [">"]  = "gt",  -- [Part b]
-  [">="] = "gte", -- [Part b]
-  ["=="] = "eq",  -- [Part b]
-  ["!="] = "neq"  -- [Part b]
+  ["<"]  = "lt",
+  ["<="] = "lte",
+  [">"]  = "gt",
+  [">="] = "gte",
+  ["=="] = "eq",
+  ["!="] = "neq"
 }
 
 unops = {
@@ -116,9 +121,9 @@ function codeExp(state, ast)
     codeExp(state, ast.e1)
     codeExp(state, ast.e2)
     addCode(state, binops[ast.op])
-  elseif (ast.tag == "unop") then   -- [Part a]
-    codeExp(state, ast.e)           -- [Part a]
-    addCode(state, unops[ast.op])   -- [Part a]
+  elseif (ast.tag == "unop") then
+    codeExp(state, ast.e)
+    addCode(state, unops[ast.op])
   end
 end
 
@@ -163,33 +168,33 @@ function run(code, stack)
       top = top - 1
       logStr = logStr .. "\nexp: " .. stack[top] .. " ^ " .. stack[top + 1]
       stack[top] = stack[top] ^ stack[top + 1]
-    elseif code[pc] == "neg" then                         -- [Part a]
-      logStr = logStr .. "\nneg: " .. "-" .. stack[top]   -- [Part a]
-      stack[top] = -stack[top]                            -- [Part a]
-    elseif code[pc] == "lte" then                                             -- [Part b]
-      top = top - 1                                                           -- [Part b]
-      logStr = logStr .. "\nlte: " .. stack[top] .. " <= " .. stack[top + 1]  -- [Part b]
-      stack[top] = stack[top] <= stack[top + 1]                               -- [Part b]
-    elseif code[pc] == "lt" then                                              -- [Part b]
-      top = top - 1                                                           -- [Part b]
-      logStr = logStr .. "\nlt: " .. stack[top] .. " < " .. stack[top + 1]    -- [Part b]
-      stack[top] = stack[top] < stack[top + 1]                                -- [Part b]
-    elseif code[pc] == "gte" then                                             -- [Part b]
-      top = top - 1                                                           -- [Part b]
-      logStr = logStr .. "\ngte: " .. stack[top] .. " >= " .. stack[top + 1]  -- [Part b]
-      stack[top] = stack[top] >= stack[top + 1]                               -- [Part b]
-    elseif code[pc] == "gt" then                                              -- [Part b]
-      top = top - 1                                                           -- [Part b]
-      logStr = logStr .. "\ngt: " .. stack[top] .. " < " .. stack[top + 1]    -- [Part b]
-      stack[top] = stack[top] > stack[top + 1]                                -- [Part b]
-    elseif code[pc] == "neq" then                                             -- [Part b]
-      top = top - 1                                                           -- [Part b]
-      logStr = logStr .. "\nneq: " .. stack[top] .. " != " .. stack[top + 1]  -- [Part b]
-      stack[top] = stack[top] ~= stack[top + 1]                               -- [Part b]
-    elseif code[pc] == "eq" then                                              -- [Part b]
-      top = top - 1                                                           -- [Part b]
-      logStr = logStr .. "\neq: " .. stack[top] .. " == " .. stack[top + 1]   -- [Part b]
-      stack[top] = stack[top] == stack[top + 1]                               -- [Part b]
+    elseif code[pc] == "neg" then
+      logStr = logStr .. "\nneg: " .. "-" .. stack[top]
+      stack[top] = -stack[top]
+    elseif code[pc] == "lte" then
+      top = top - 1
+      logStr = logStr .. "\nlte: " .. stack[top] .. " <= " .. stack[top + 1]
+      stack[top] = stack[top] <= stack[top + 1]
+    elseif code[pc] == "lt" then
+      top = top - 1
+      logStr = logStr .. "\nlt: " .. stack[top] .. " < " .. stack[top + 1]
+      stack[top] = stack[top] < stack[top + 1]
+    elseif code[pc] == "gte" then
+      top = top - 1
+      logStr = logStr .. "\ngte: " .. stack[top] .. " >= " .. stack[top + 1]
+      stack[top] = stack[top] >= stack[top + 1]
+    elseif code[pc] == "gt" then
+      top = top - 1
+      logStr = logStr .. "\ngt: " .. stack[top] .. " < " .. stack[top + 1]
+      stack[top] = stack[top] > stack[top + 1]
+    elseif code[pc] == "neq" then
+      top = top - 1
+      logStr = logStr .. "\nneq: " .. stack[top] .. " != " .. stack[top + 1]
+      stack[top] = stack[top] ~= stack[top + 1]
+    elseif code[pc] == "eq" then
+      top = top - 1
+      logStr = logStr .. "\neq: " .. stack[top] .. " == " .. stack[top + 1]
+      stack[top] = stack[top] == stack[top + 1]
     else
       error("Unknown instruction")
     end
