@@ -190,6 +190,7 @@ statement = lpeg.V("statement")
 statements = lpeg.V("statements")
 prog = lpeg.V("prog")
 funcDec = lpeg.V("funcDec")
+call = lpeg.V("call")
 
 grammar = lpeg.P{
   "prog",
@@ -198,6 +199,7 @@ grammar = lpeg.P{
   funcDec = Rw("function") * ID * T("(") * T(")") * block / node("function", "name", "body"),
   fact = number
        + (T("(") * expr * T(")"))
+       + call
        + lhs,
   expU = ((opU * fact)                  / node("unop", "op", "exp")) + fact,
   expE = lpeg.Ct(expU * (opE * expU)^0) / foldBin,
@@ -213,7 +215,7 @@ grammar = lpeg.P{
   while1 = (Rw("while") * expr * block) / node("while1", "cond", "body"),
   lhs  = lpeg.Ct(var * (T("[") * expr * T("]"))^0) / foldIndex,
   new1 = (Rw("new")  * (T("[") * expr * T("]"))^0) / foldNew,
-  -- new1 = (Rw("new") * T("[") * expr * T("]")) / node("new", "exp"),
+  call = ID * T("(") * T(")") / node("call", "funName"),
   block = T("{") * statements * T("}"),
   statement = block
             + if1
@@ -295,6 +297,9 @@ end
 
 function Compiler:id2num(id)
   if not self:idInUse(id) then
+    if self.funcs[id] then                                                             -- [Ex]
+      error("Global variable '" .. id .. "' collides with function of the same name.") -- [Ex]
+    end                                                                                -- [Ex]
     self.numVars = self.numVars + 1
     self.vars[id] = self.numVars
   end
@@ -342,8 +347,20 @@ function Compiler:codeExp(ast)
     -- can pop them all and implement.
     self:codeExp({ tag = "number", val = numDims})
     self:addCode("array_new")
+  elseif (ast.tag == "call") then
+    self:codeCall(ast)
   else
     error("Unknown AST node type: " .. ast.tag)
+  end
+end
+
+function Compiler:codeCall(ast)
+  local func = self.funcs[ast.funName]
+  if not func then
+    error("Call to undefined function " .. ast.funName)
+  else
+    self:addCode("call")
+    self:addCode(func.code)
   end
 end
 
@@ -435,11 +452,11 @@ function Compiler:compile(ast)
 
   for i = 1, #ast do
     -- Encode the function, unless its name is already taken.
-    if self.funcs[ast[i].name] then                     -- [Ex]
-      error("Duplicate function name: " .. ast[i].name) -- [Ex]
-    else                                                -- [Ex]
-      self:codeFunction(ast[i])                         -- [Ex]
-    end                                                 -- [Ex]
+    if self.funcs[ast[i].name] then
+      error("Duplicate function name: " .. ast[i].name)
+    else
+      self:codeFunction(ast[i])
+    end
   end
 
   -- Get the main() function out.
@@ -490,9 +507,9 @@ function generateArray(dims)
 end
 
 function run(code, mem, stack, top)
-  pc = 1
-  -- top = 0
+  local pc     = 1
   local logStr = ""
+
   while (pc <= #code) do
     if code[pc] == "push" then
       pc  = pc + 1    -- we consume two code words for a push.
@@ -511,8 +528,8 @@ function run(code, mem, stack, top)
       else
         stack[top] = mem[id]
         -- logStr = logStr .. "\nload    " .. code[pc] .. " -> " .. mem[id]
-        -- logStr = logStr .. "\nload        " .. code[pc] .. " -> " .. printableValue(mem[id])
-        logStr = logStr .. "\nload        " .. code[pc]
+        logStr = logStr .. "\nload        " .. id .. " -> " .. printableValue(val)
+        -- logStr = logStr .. "\nload        " .. code[pc]
       end
     elseif code[pc] == "store" then
       pc = pc + 1
@@ -520,8 +537,8 @@ function run(code, mem, stack, top)
       -- print("storing " .. type(stack[top]) .. " to variable " .. id)
       mem[id] = stack[top]
       top = top - 1
-      logStr = logStr .. "\nstore       " .. code[pc] .. " <- " .. printableValue(mem[id])
-      -- logStr = logStr .. "\nstore       " .. code[pc] .. " <- "
+      -- logStr = logStr .. "\nstore       " .. code[pc] .. " <- " .. printableValue(mem[id])
+      logStr = logStr .. "\nstore       " .. id .. " <- " .. printableValue(stack[top + 1])
     elseif code[pc] == "array_new" then
       -- Gather the array dims
       numDims = stack[top]
@@ -530,14 +547,14 @@ function run(code, mem, stack, top)
         dims[i] = stack[top - i]
       end
 
-      logStr = logStr .. "\narray_new   " .. printableValue(dims)
-
       -- We have consumed numDims + 1 values from the stack, but are about to
       -- push another.
       top = top - numDims
 
       -- Generate
       stack[top] = generateArray(dims)
+
+      logStr = logStr .. "\narray_new   " .. printableValue(dims)
     elseif code[pc] == "array_load" then
       local index = stack[top]
       local array = stack[top - 1]
@@ -556,12 +573,18 @@ function run(code, mem, stack, top)
         error("Index (" .. index .. ") out of range (array size is " .. array.size .. ")")
       else
         array[index] = value
-        logStr = logStr .. "\narray_store " .. top - 2 .. "[" .. index .. "]" .. " <- " .. value
         top = top - 3
+        logStr = logStr .. "\narray_store " .. top + 1 .. "[" .. index .. "]" .. " <- " .. value
       end
+    elseif code[pc] == "call" then
+      pc = pc + 1
+      local code = code[pc]
+      logStr = logStr .. "\ncall..."
+      local r = run(code, mem, stack, top)
+      top = r[1]
+      logStr = logStr .. r[2]
     elseif code[pc] == "return" then
       logStr = logStr .. "\nreturn  " .. tostring(stack[top])
-      -- return logStr
       return {top, logStr} -- run() will now operate like a Writer monad.
     elseif code[pc] == "print" then
       logStr = logStr .. "\nprint       \"" .. printableValue(stack[top]) .. "\""
