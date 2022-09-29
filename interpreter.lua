@@ -132,7 +132,7 @@ IDStarter = alpha + lpeg.S("_")
 IDValids  = alphanum + lpeg.S("_")
 
 -- List of reserved words.
-reservedWords = { "return", "if", "elseif", "else", "while", "and", "or", "new" }
+reservedWords = { "return", "if", "elseif", "else", "while", "and", "or", "new", "function" }
 
 -- Build a pattern to match any reserved word.
 reservedPattern = lpeg.P(false)
@@ -188,10 +188,17 @@ while1 = lpeg.V("while1")
 block = lpeg.V("block")
 statement = lpeg.V("statement")
 statements = lpeg.V("statements")
+prog = lpeg.V("prog")
+funcDec = lpeg.V("funcDec")
 
 grammar = lpeg.P{
-  "statements",
-  fact = number + (T("(") * expr * T(")")) + lhs,
+  "prog",
+  -- prog = space * statements * -1,
+  prog = space * lpeg.Ct(funcDec^1) * -1,
+  funcDec = Rw("function") * ID * T("(") * T(")") * block / node("function", "name", "body"),
+  fact = number
+       + (T("(") * expr * T(")"))
+       + lhs,
   expU = ((opU * fact)                  / node("unop", "op", "exp")) + fact,
   expE = lpeg.Ct(expU * (opE * expU)^0) / foldBin,
   expM = lpeg.Ct(expE * (opM * expE)^0) / foldBin,
@@ -217,8 +224,6 @@ grammar = lpeg.P{
   statements = (statement * (T(";") * statements)^-1 * T(";")^-1) / seqNode
 }
 
-grammar = grammar * -1
-
 
 function parse(code)
   ast = grammar:match(code)
@@ -232,7 +237,7 @@ end
 
 -- Begin Compiler type definition
 Compiler = {
-  code = {},
+  funcs = {},
   vars = {},
   numVars = 0,
   unops = {
@@ -268,16 +273,16 @@ end
 
 -- Recursively convert the tree of multiple array subdimensions into a sequence
 -- of push intructions, and return the number of dimensions we found/traversed.
-function Compiler:addDims(ast)          -- [Ex]
-  if ast.subdim then                    -- [Ex]
-    n = 1 + self:addDims(ast.subdim)    -- [Ex]
-    self:codeExp(ast.exp)               -- [Ex]
-    return n                            -- [Ex]
-  else                                  -- [Ex]
-    self:codeExp(ast.exp)               -- [Ex]
-    return 1                            -- [Ex]
-  end                                   -- [Ex]
-end                                     -- [Ex]
+function Compiler:addDims(ast)
+  if ast.subdim then
+    n = 1 + self:addDims(ast.subdim)
+    self:codeExp(ast.exp)
+    return n
+  else
+    self:codeExp(ast.exp)
+    return 1
+  end
+end
 
 function Compiler:idInUse(id)
   index = self.vars[id]
@@ -329,14 +334,16 @@ function Compiler:codeExp(ast)
     self:codeExp(ast.array)
     self:codeExp(ast.index)
     self:addCode("array_load")
-  elseif (ast.tag == "new") then                    -- [Ex]
+  elseif (ast.tag == "new") then
     -- Push the individual array dimensions onto the stack, one at a time.
-    numDims = self:addDims(ast)                     -- [Ex]
+    numDims = self:addDims(ast)
 
     -- Finally, push the number of dimensions onto the stack, so array_new
     -- can pop them all and implement.
-    self:codeExp({ tag = "number", val = numDims})  -- [Ex]
-    self:addCode("array_new")                       -- [Ex]
+    self:codeExp({ tag = "number", val = numDims})
+    self:addCode("array_new")
+  else
+    error("Unknown AST node type: " .. ast.tag)
   end
 end
 
@@ -409,54 +416,83 @@ function Compiler:codeStat(ast)
 
     -- Fix up the l2 jump to land here.
     self.code[l2] = #(self.code) - l2
+  else
+    error("Unknown AST node type: " .. ast.tag)
   end
 end
 
+function Compiler:codeFunction(ast)
+  local code = {}
+  self.code = code
+  self.funcs[ast.name] = { code = code }
+  self:codeStat(ast.body)
+  self:addCode("push")
+  self:addCode("0")
+  self:addCode("return")
+end
+
 function Compiler:compile(ast)
-  self:codeStat(ast)
-  return self.code
+
+  for i = 1, #ast do
+    -- Encode the function, unless its name is already taken.
+    if self.funcs[ast[i].name] then                     -- [Ex]
+      error("Duplicate function name: " .. ast[i].name) -- [Ex]
+    else                                                -- [Ex]
+      self:codeFunction(ast[i])                         -- [Ex]
+    end                                                 -- [Ex]
+  end
+
+  -- Get the main() function out.
+  local main = self.funcs["main"]
+
+  -- Ensure main() exists
+  if not main then
+    error("No function main()")
+  else
+    return main
+  end
 end
 
 function printableValue(v)
-  if v == nil then                                              -- [Ex]
-    return "";                                                  -- [Ex]
-  elseif (type(v) == "table") then                              -- [Ex]
-    s = "array[" .. v.size .. "] {" .. printableValue(v[1]);    -- [Ex]
-    for i = 2, #v do                                            -- [Ex]
-      s = s .. ", " .. printableValue(v[i])                     -- [Ex]
-    end                                                         -- [Ex]
-    s = s .. "}"                                                -- [Ex]
-    return s                                                    -- [Ex]
-  else                                                          -- [Ex]
-    return v                                                    -- [Ex]
+  if v == nil then
+    return "";
+  elseif (type(v) == "table") then
+    s = "array[" .. v.size .. "] {" .. printableValue(v[1]);
+    for i = 2, #v do
+      s = s .. ", " .. printableValue(v[i])
+    end
+    s = s .. "}"
+    return s
+  else
+    return v
   end
 end
 
 -- Recursively generate a multi-dimensional array. Don't love the mechanic of
 -- passing in the index explicitly, but I couldn't figure out how to peel off
 -- the first element of `dims` in the more classial recursive style.
-function generateArray_impl(index, dims)            -- [Ex]
-                                                    -- [Ex]
-  if index < #dims then                             -- [Ex]
-    local size = dims[index]                        -- [Ex]
-    local r = { size = size }                       -- [Ex]
-    for i = 1, size do                              -- [Ex]
-      r[i] = generateArray_impl(index + 1, dims)    -- [Ex]
-    end                                             -- [Ex]
-    return r                                        -- [Ex]
-  else                                              -- [Ex]
-    return { size = dims[index] }                   -- [Ex]
-  end                                               -- [Ex]
-end                                                 -- [Ex]
+function generateArray_impl(index, dims)
 
-function generateArray(dims)                        -- [Ex]
-  return generateArray_impl(1, dims)                -- [Ex]
-end                                                 -- [Ex]
+  if index < #dims then
+    local size = dims[index]
+    local r = { size = size }
+    for i = 1, size do
+      r[i] = generateArray_impl(index + 1, dims)
+    end
+    return r
+  else
+    return { size = dims[index] }
+  end
+end
 
-function run(code, mem, stack)
+function generateArray(dims)
+  return generateArray_impl(1, dims)
+end
+
+function run(code, mem, stack, top)
   pc = 1
-  top = 0
-  logStr = ""
+  -- top = 0
+  local logStr = ""
   while (pc <= #code) do
     if code[pc] == "push" then
       pc  = pc + 1    -- we consume two code words for a push.
@@ -486,22 +522,22 @@ function run(code, mem, stack)
       top = top - 1
       logStr = logStr .. "\nstore       " .. code[pc] .. " <- " .. printableValue(mem[id])
       -- logStr = logStr .. "\nstore       " .. code[pc] .. " <- "
-    elseif code[pc] == "array_new" then                                         -- [Ex]
-      -- Gather the array dims                                                  -- [Ex]
-      numDims = stack[top]                                                      -- [Ex]
-      dims = { size = numDims }                                                 -- [Ex]
-      for i = 1, numDims do                                                     -- [Ex]
-        dims[i] = stack[top - i]                                                -- [Ex]
-      end                                                                       -- [Ex]
-                                                                                -- [Ex]
-      logStr = logStr .. "\narray_new   " .. printableValue(dims)               -- [Ex]
-                                                                                -- [Ex]
-      -- We have consumed numDims + 1 values from the stack, but are about to   -- [Ex]
-      -- push another.                                                          -- [Ex]
-      top = top - numDims                                                       -- [Ex]
-                                                                                -- [Ex]
-      -- Generate                                                               -- [Ex]
-      stack[top] = generateArray(dims)                                          -- [Ex]
+    elseif code[pc] == "array_new" then
+      -- Gather the array dims
+      numDims = stack[top]
+      dims = { size = numDims }
+      for i = 1, numDims do
+        dims[i] = stack[top - i]
+      end
+
+      logStr = logStr .. "\narray_new   " .. printableValue(dims)
+
+      -- We have consumed numDims + 1 values from the stack, but are about to
+      -- push another.
+      top = top - numDims
+
+      -- Generate
+      stack[top] = generateArray(dims)
     elseif code[pc] == "array_load" then
       local index = stack[top]
       local array = stack[top - 1]
@@ -525,7 +561,8 @@ function run(code, mem, stack)
       end
     elseif code[pc] == "return" then
       logStr = logStr .. "\nreturn  " .. tostring(stack[top])
-      return logStr
+      -- return logStr
+      return {top, logStr} -- run() will now operate like a Writer monad.
     elseif code[pc] == "print" then
       logStr = logStr .. "\nprint       \"" .. printableValue(stack[top]) .. "\""
       print(printableValue(stack[top]))
@@ -631,7 +668,7 @@ function run(code, mem, stack)
     end
     pc = pc + 1 -- Consume the code word for this instruction.
   end
-  return logStr
+  return {top, logStr}
 end
 
 input = io.read("*all")
@@ -641,14 +678,19 @@ ast = parse(input)
 print("AST\n" .. printTable(ast) .. "\n")
 
 compiler = Compiler
-code = compiler:compile(ast)
--- code = compile(ast)
-print("CODE\n".. printTable(code) .. "\n")
+local mainFunc = compiler:compile(ast)
+local mainCode = mainFunc.code
+
+print("CODE\n".. printTable(mainCode) .. "\n")
 
 stack = {}
 mem   = {}
-logStr = run(code, mem, stack)
-print("\nRESULT\n" .. tostring(stack[1]))
+local output = run(mainCode, mem, stack, 0)
+-- print(printTable(output))
+
+local top    = output[1]
+local logStr = output[2]
+print("\nRESULT\n" .. tostring(stack[top]))
 
 -- print("stack: " .. printTable(stack))
 
