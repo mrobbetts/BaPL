@@ -196,7 +196,7 @@ grammar = lpeg.P{
   "prog",
   -- prog = space * statements * -1,
   prog = space * lpeg.Ct(funcDec^1) * -1,
-  funcDec = Rw("function") * ID * T("(") * T(")") * block / node("function", "name", "body"),
+  funcDec = Rw("function") * ID * T("(") * T(")") * (block + T(";")) / node("function", "name", "body"),     -- [Ex]
   fact = number
        + (T("(") * expr * T(")"))
        + call
@@ -216,11 +216,12 @@ grammar = lpeg.P{
   lhs  = lpeg.Ct(var * (T("[") * expr * T("]"))^0) / foldIndex,
   new1 = (Rw("new")  * (T("[") * expr * T("]"))^0) / foldNew,
   call = ID * T("(") * T(")") / node("call", "funName"),
-  block = T("{") * statements * T("}"),
+  block = T("{") * statements * T("}") / node("block", "body"),
   statement = block
             + if1
             + while1
             + ((T("@") * expr)          / node("print", "exp"))
+            + call
             + ((lhs * T("=") * (new1 + expr)) / node("assgn", "lhs", "exp"))
             + ((Rw("return") * expr)    / node("ret", "exp")),
   statements = (statement * (T(";") * statements)^-1 * T(";")^-1) / seqNode
@@ -387,6 +388,12 @@ function Compiler:codeStat(ast)
   elseif (ast.tag == "seq") then
     self:codeStat(ast.st1)
     self:codeStat(ast.st2)
+  elseif (ast.tag == "block") then
+    self:codeBlock(ast)
+  elseif (ast.tag == "call") then
+    self:codeCall(ast)
+    self:addCode("pop") -- We need to pop the result of a function
+    self:addCode("1")   -- call when that call is a statement.
   elseif (ast.tag == "ret") then
     self:codeExp(ast.exp)
     self:addCode("return")
@@ -438,21 +445,42 @@ function Compiler:codeStat(ast)
   end
 end
 
-function Compiler:codeFunction(ast)
-  local code = {}
-  self.code = code
-  self.funcs[ast.name] = { code = code }
+function Compiler:codeBlock(ast)
   self:codeStat(ast.body)
-  self:addCode("push")
-  self:addCode("0")
-  self:addCode("return")
+end
+
+
+function Compiler:codeFunction(ast)
+  if not self.funcs[ast.name] then
+    -- This is the first time we have seen this function, so we will create an
+    -- empty code table for it.
+    local code = {}
+    self.funcs[ast.name] = { code = code }
+    self.code = code
+
+  else
+    -- This function already exists and will have an (empty) code table. We must
+    -- use this table as the place to generate code into.
+    self.code = self.funcs[ast.name].code
+  end
+
+  -- Encode the function body if it has one; otherwise, we are just noting  -- [Ex]
+  -- it existence (i.e. a forward declaration)                              -- [Ex]
+  if ast.body then                                                          -- [Ex]
+    self:codeStat(ast.body)
+    self:addCode("push")
+    self:addCode("0")
+    self:addCode("return")
+  end
 end
 
 function Compiler:compile(ast)
 
   for i = 1, #ast do
     -- Encode the function, unless its name is already taken.
-    if self.funcs[ast[i].name] then
+    -- if self.funcs[ast[i].name] then
+    thisFun = self.funcs[ast[i].name]
+    if thisFun and next(thisFun.code) ~= nil then                           -- [Ex]
       error("Duplicate function name: " .. ast[i].name)
     else
       self:codeFunction(ast[i])
@@ -516,6 +544,11 @@ function run(code, mem, stack, top)
       top = top + 1
       stack[top] = code[pc]
       logStr = logStr .. "\npush        " .. code[pc]
+    elseif code[pc] == "pop" then
+      pc = pc + 1
+      local count = code[pc]
+      top = top - count
+      logStr = logStr .. "\npop         " .. count
     elseif code[pc] == "load" then
       pc = pc + 1     -- we consume two code words for a load.
       top = top + 1
