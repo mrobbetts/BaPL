@@ -572,6 +572,8 @@ function Compiler:compile(ast)
   -- Ensure main() exists
   if not main then
     error("No function main()")
+  elseif #main.params ~= 0 then
+    error("main() must have no parameters; has " .. #main.params)
   else
     return main
   end
