@@ -196,7 +196,7 @@ grammar = lpeg.P{
   "prog",
   -- prog = space * statements * -1,
   prog = space * lpeg.Ct(funcDec^1) * -1,
-  funcDec = Rw("function") * ID * T("(") * T(")") * (block + T(";")) / node("function", "name", "body"),     -- [Ex]
+  funcDec = Rw("function") * ID * T("(") * T(")") * (block + T(";")) / node("function", "name", "body"),
   fact = number
        + (T("(") * expr * T(")"))
        + call
@@ -218,6 +218,7 @@ grammar = lpeg.P{
   call = ID * T("(") * T(")") / node("call", "funName"),
   block = T("{") * statements * T("}") / node("block", "body"),
   statement = block
+            + (T("var") * ID * (T("=") * (new1 + expr))) / node("local", "name", "init")
             + if1
             + while1
             + ((T("@") * expr)          / node("print", "exp"))
@@ -242,6 +243,7 @@ end
 Compiler = {
   funcs = {},
   vars = {},
+  locals = {},
   numVars = 0,
   unops = {
     ["-"] = "neg",
@@ -298,9 +300,9 @@ end
 
 function Compiler:id2num(id)
   if not self:idInUse(id) then
-    if self.funcs[id] then                                                             -- [Ex]
-      error("Global variable '" .. id .. "' collides with function of the same name.") -- [Ex]
-    end                                                                                -- [Ex]
+    if self.funcs[id] then
+      error("Global variable '" .. id .. "' collides with function of the same name.")
+    end
     self.numVars = self.numVars + 1
     self.vars[id] = self.numVars
   end
@@ -365,6 +367,7 @@ function Compiler:codeCall(ast)
   end
 end
 
+
 function Compiler:codeAssign(ast)
   local lhs = ast.lhs
   if (lhs.tag == "variable") then
@@ -388,6 +391,9 @@ function Compiler:codeStat(ast)
   elseif (ast.tag == "seq") then
     self:codeStat(ast.st1)
     self:codeStat(ast.st2)
+  elseif (ast.tag == "local") then
+    self:codeExp(ast.init)
+    self.locals[#self.locals + 1] = ast.name -- Add accounting for this variable to our local list.
   elseif (ast.tag == "block") then
     self:codeBlock(ast)
   elseif (ast.tag == "call") then
@@ -397,6 +403,7 @@ function Compiler:codeStat(ast)
   elseif (ast.tag == "ret") then
     self:codeExp(ast.exp)
     self:addCode("return")
+    self:addCode(#self.locals)
   elseif (ast.tag == "print") then
     self:codeExp(ast.exp)
     self:addCode("print")
@@ -446,7 +453,19 @@ function Compiler:codeStat(ast)
 end
 
 function Compiler:codeBlock(ast)
+  local oldLevel = #self.locals
   self:codeStat(ast.body)
+  local diff = #self.locals - oldLevel
+  if diff > 0 then
+    -- Remove the local variables from the compiler's accounting
+    for i = 1, diff do
+      table.remove(self.locals)
+    end
+
+    -- Pop the local variables from the stack as we exit the block.
+    self:addCode("pop")
+    self:addCode(diff)
+  end
 end
 
 
@@ -464,13 +483,14 @@ function Compiler:codeFunction(ast)
     self.code = self.funcs[ast.name].code
   end
 
-  -- Encode the function body if it has one; otherwise, we are just noting  -- [Ex]
-  -- it existence (i.e. a forward declaration)                              -- [Ex]
-  if ast.body then                                                          -- [Ex]
+  -- Encode the function body if it has one; otherwise, we are just noting
+  -- it existence (i.e. a forward declaration)
+  if ast.body then
     self:codeStat(ast.body)
     self:addCode("push")
     self:addCode("0")
     self:addCode("return")
+    self:addCode(#self.locals)
   end
 end
 
@@ -480,7 +500,7 @@ function Compiler:compile(ast)
     -- Encode the function, unless its name is already taken.
     -- if self.funcs[ast[i].name] then
     thisFun = self.funcs[ast[i].name]
-    if thisFun and next(thisFun.code) ~= nil then                           -- [Ex]
+    if thisFun and next(thisFun.code) ~= nil then
       error("Duplicate function name: " .. ast[i].name)
     else
       self:codeFunction(ast[i])
@@ -617,8 +637,11 @@ function run(code, mem, stack, top)
       top = r[1]
       logStr = logStr .. r[2]
     elseif code[pc] == "return" then
-      logStr = logStr .. "\nreturn  " .. tostring(stack[top])
-      return {top, logStr} -- run() will now operate like a Writer monad.
+      pc = pc + 1
+      local count = code[pc]
+      logStr = logStr .. "\nreturn  " .. count .. " (" .. tostring(stack[top]) .. ")"
+      stack[top - count] = stack[top]
+      return {top - count, logStr} -- run() will now operate like a Writer monad.
     elseif code[pc] == "print" then
       logStr = logStr .. "\nprint       \"" .. printableValue(stack[top]) .. "\""
       print(printableValue(stack[top]))
