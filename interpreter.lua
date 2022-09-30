@@ -218,7 +218,7 @@ grammar = lpeg.P{
   call = ID * T("(") * T(")") / node("call", "funName"),
   block = T("{") * statements * T("}") / node("block", "body"),
   statement = block
-            + (T("var") * ID * (T("=") * (new1 + expr))) / node("local", "name", "init")
+            + (T("var") * ID * (T("=") * (new1 + expr))^-1) / node("local", "name", "init") -- [Ex]
             + if1
             + while1
             + ((T("@") * expr)          / node("print", "exp"))
@@ -392,7 +392,12 @@ function Compiler:codeStat(ast)
     self:codeStat(ast.st1)
     self:codeStat(ast.st2)
   elseif (ast.tag == "local") then
-    self:codeExp(ast.init)
+    if (ast.init) then
+      self:codeExp(ast.init)
+    else
+      self:addCode("push")
+      self:addCode(0)
+    end
     self.locals[#self.locals + 1] = ast.name -- Add accounting for this variable to our local list.
   elseif (ast.tag == "block") then
     self:codeBlock(ast)
