@@ -309,6 +309,16 @@ function Compiler:id2num(id)
   return self.vars[id]
 end
 
+function Compiler:findLocal(name)
+  for i = #self.locals, 1, -1 do
+    if self.locals[i] == name then
+      return i
+    end
+  end
+  return nil
+end
+
+
 -- Encode the root of the AST as an expression.
 function Compiler:codeExp(ast)
   if (ast.tag == "number") then
@@ -336,8 +346,16 @@ function Compiler:codeExp(ast)
     self:codeExp(ast.exp)
     self:addCode(self.unops[ast.op])
   elseif (ast.tag == "variable") then
-    self:addCode("load")
-    self:addCode(self:id2num(ast.val))
+    local index = self:findLocal(ast.val)
+    if index then
+      -- Is a local
+      self:addCode("loadL")
+      self:addCode(index)
+    else
+      -- Is a global
+      self:addCode("load")
+      self:addCode(self:id2num(ast.val))
+    end
   elseif (ast.tag == "indexed") then
     self:codeExp(ast.array)
     self:codeExp(ast.index)
@@ -370,10 +388,17 @@ end
 
 function Compiler:codeAssign(ast)
   local lhs = ast.lhs
+
   if (lhs.tag == "variable") then
     self:codeExp(ast.exp)
-    self:addCode("store")
-    self:addCode(self:id2num(lhs.val))
+    local idx = self:findLocal(lhs.val)
+    if idx then
+      self:addCode("storeL")
+      self:addCode(idx)
+    else
+      self:addCode("store")
+      self:addCode(self:id2num(lhs.val))
+    end
   elseif (lhs.tag == "indexed") then
     self:codeExp(lhs.array)
     self:codeExp(lhs.index)
@@ -562,6 +587,7 @@ end
 function run(code, mem, stack, top)
   local pc     = 1
   local logStr = ""
+  local base   = top   -- Our current stack frame base.
 
   while (pc <= #code) do
     if code[pc] == "push" then
@@ -574,6 +600,13 @@ function run(code, mem, stack, top)
       local count = code[pc]
       top = top - count
       logStr = logStr .. "\npop         " .. count
+    elseif code[pc] == "loadL" then
+      pc = pc + 1     -- we consume two code words for a load.
+      top = top + 1
+      local id = code[pc]
+      local val = stack[base + id]
+      stack[top] = val;
+      logStr = logStr .. "\nloadL       " .. id .. " -> " .. printableValue(val)
     elseif code[pc] == "load" then
       pc = pc + 1     -- we consume two code words for a load.
       top = top + 1
@@ -584,11 +617,15 @@ function run(code, mem, stack, top)
         print(printTable(mem))
         error("Variable used before it is defined, at [PC " .. pc .. "] (variable " .. id ..")")
       else
-        stack[top] = mem[id]
-        -- logStr = logStr .. "\nload    " .. code[pc] .. " -> " .. mem[id]
+        stack[top] = val
         logStr = logStr .. "\nload        " .. id .. " -> " .. printableValue(val)
-        -- logStr = logStr .. "\nload        " .. code[pc]
       end
+    elseif code[pc] == "storeL" then
+      pc = pc + 1
+      id = code[pc]
+      stack[base + id] = stack[top]
+      top = top - 1
+      logStr = logStr .. "\nstore       " .. id .. " <- " .. printableValue(stack[top + 1])
     elseif code[pc] == "store" then
       pc = pc + 1
       id = code[pc]
