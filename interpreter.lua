@@ -190,13 +190,16 @@ statement = lpeg.V("statement")
 statements = lpeg.V("statements")
 prog = lpeg.V("prog")
 funcDec = lpeg.V("funcDec")
+params = lpeg.V("params")
+args = lpeg.V("args")
 call = lpeg.V("call")
 
 grammar = lpeg.P{
   "prog",
   -- prog = space * statements * -1,
   prog = space * lpeg.Ct(funcDec^1) * -1,
-  funcDec = Rw("function") * ID * T("(") * T(")") * (block + T(";")) / node("function", "name", "body"),
+  funcDec = Rw("function") * ID * T("(") * params * T(")") * (block + T(";")) / node("function", "name", "params", "body"),
+  params = lpeg.Ct((ID * (T(",") * ID)^0)^-1),
   fact = number
        + (T("(") * expr * T(")"))
        + call
@@ -215,7 +218,8 @@ grammar = lpeg.P{
   while1 = (Rw("while") * expr * block) / node("while1", "cond", "body"),
   lhs  = lpeg.Ct(var * (T("[") * expr * T("]"))^0) / foldIndex,
   new1 = (Rw("new")  * (T("[") * expr * T("]"))^0) / foldNew,
-  call = ID * T("(") * T(")") / node("call", "funName"),
+  call = ID * T("(") * args * T(")") / node("call", "funName", "args"),
+  args = lpeg.Ct((expr * (T(",") * expr)^0)^-1),
   block = T("{") * statements * T("}") / node("block", "body"),
   statement = block
             + (T("var") * ID * (T("=") * (new1 + expr))^-1) / node("local", "name", "init") -- [Ex]
