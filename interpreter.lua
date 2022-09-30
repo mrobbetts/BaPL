@@ -319,6 +319,12 @@ function Compiler:findLocal(name)
       return i
     end
   end
+
+  for i = 1, #self.params do
+    if name == self.params[i] then
+      return -(#self.params - i)
+    end
+  end
   return nil
 end
 
@@ -389,6 +395,11 @@ function Compiler:codeCall(ast)
       error("Incorrect number of arguments given to " .. ast.funName .. "; " .. #ast.args .. " given, " .. #func.params .. " expected.")
     end
 
+    -- Push the function arguments onto the stack prior to the call.
+    for i = 1, #ast.args do
+      self:codeExp(ast.args[i])
+    end
+
     self:addCode("call")
     self:addCode(func.code)
   end
@@ -441,12 +452,12 @@ function Compiler:codeStat(ast)
     self:codeBlock(ast)
   elseif (ast.tag == "call") then
     self:codeCall(ast)
-    self:addCode("pop") -- We need to pop the result of a function
-    self:addCode("1")   -- call when that call is a statement.
+    self:addCode("pop")            -- We need to pop the result of a function
+    self:addCode(1 + #self.params) -- call when that call is a statement.
   elseif (ast.tag == "ret") then
     self:codeExp(ast.exp)
     self:addCode("return")
-    self:addCode(#self.locals)
+    self:addCode(#self.locals + #self.params)
   elseif (ast.tag == "print") then
     self:codeExp(ast.exp)
     self:addCode("print")
@@ -515,15 +526,20 @@ end
 function Compiler:codeFunction(ast)
   if not self.funcs[ast.name] then
     -- This is the first time we have seen this function, so we will create an
-    -- empty code table for it.
+    -- empty code table for it, and save its params.
     local code = {}
     self.funcs[ast.name] = { code = code, params = ast.params }
     self.code = code
+    self.params = ast.params
 
   else
     -- This function already exists and will have an (empty) code table. We must
     -- use this table as the place to generate code into.
     self.code = self.funcs[ast.name].code
+    if #self.params ~= #ast.params then
+      error("Redefinition of " .. ast.name .. " with different number of parameters.")
+    end
+    self.params = ast.params
   end
 
   -- Encode the function body if it has one; otherwise, we are just noting
@@ -533,7 +549,7 @@ function Compiler:codeFunction(ast)
     self:addCode("push")
     self:addCode("0")
     self:addCode("return")
-    self:addCode(#self.locals)
+    self:addCode(#self.locals + #self.params)
   end
 end
 
