@@ -384,6 +384,11 @@ function Compiler:codeCall(ast)
   if not func then
     error("Call to undefined function " .. ast.funName)
   else
+
+    if #func.params ~= #ast.args then
+      error("Incorrect number of arguments given to " .. ast.funName .. "; " .. #ast.args .. " given, " .. #func.params .. " expected.")
+    end
+
     self:addCode("call")
     self:addCode(func.code)
   end
@@ -512,7 +517,7 @@ function Compiler:codeFunction(ast)
     -- This is the first time we have seen this function, so we will create an
     -- empty code table for it.
     local code = {}
-    self.funcs[ast.name] = { code = code }
+    self.funcs[ast.name] = { code = code, params = ast.params }
     self.code = code
 
   else
