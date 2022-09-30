@@ -417,6 +417,10 @@ function Compiler:codeStat(ast)
     self:codeStat(ast.st1)
     self:codeStat(ast.st2)
   elseif (ast.tag == "local") then
+    local idx = self:findLocal(ast.name)
+    if idx and idx > oldLevel then   -- If idx > oldLevel, the variable has already been declared _in this block_.
+      error("Redeclaration of local variable " .. ast.name)
+    end
     if (ast.init) then
       self:codeExp(ast.init)
     else
@@ -483,7 +487,7 @@ function Compiler:codeStat(ast)
 end
 
 function Compiler:codeBlock(ast)
-  local oldLevel = #self.locals
+  oldLevel = #self.locals -- Make this non-local so that shadowing check can use it from inside codeState. Don't love this data sharing, but is pretty compact!
   self:codeStat(ast.body)
   local diff = #self.locals - oldLevel
   if diff > 0 then
